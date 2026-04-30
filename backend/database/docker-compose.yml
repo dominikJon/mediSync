@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:latest
+    image: postgres:18.3
     container_name: medisync_db
     restart: unless-stopped
     environment:
