@@ -1,27 +1,35 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import axios from 'axios'
-
-const apiMessage = ref('Brak połączenia z backendem...')
-
-const testConnection = async () => {
-  try {
-    const response = await axios.get('http://localhost:8000/api/health')
-    apiMessage.value = response.data.message
-  } catch (error) {
-    apiMessage.value = 'Błąd połączenia! Serwer wyłączony albo zły port.'
-    console.error(error)
-  }
-}
+// import sidebar
+import Sidebar from './components/sidebar.vue'
 </script>
 
 <template>
-  <main style="text-align: center; margin-top: 100px; font-family: sans-serif;">
-    <h1>Test Połączenia MediSync</h1>
-  
-    
-    <h2 style="margin-top: 30px; color: #333;">
-      Odpowiedź: <span style="color: #007BFF;">{{ apiMessage }}</span>
-    </h2>
-  </main>
+  <div class="app-layout">
+    <Sidebar />
+    <main class="main-content">
+      <RouterView />
+    </main>
+  </div>
 </template>
+
+<style>
+/* globalne style */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #F8FAFC; 
+}
+
+.app-layout {
+  display: flex; 
+  min-height: 100vh;
+}
+
+/* glowna tresc */
+.main-content {
+  flex: 1; 
+  padding: 32px;
+  overflow-y: auto;
+}
+</style>
