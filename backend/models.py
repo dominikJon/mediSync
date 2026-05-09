@@ -97,3 +97,12 @@ class Cennik(Base):
     cena = Column(Numeric(10, 2), nullable=False)
     data_od = Column(Date, nullable=False)
     data_do = Column(Date, nullable=True)
+
+class Transakcja(Base):
+    __tablename__ = "transakcje"
+    id = Column(Integer, primary_key=True, index=True)
+    wizyta_id = Column(Integer, ForeignKey("wizyty.id"), unique=True, nullable=False)
+    cennik_id = Column(Integer, ForeignKey("cennik.id"), nullable=False)
+    kwota = Column(Numeric(10, 2), nullable=False)
+    metoda_platnosci = Column(String(50), nullable=False)
+    data_platnosci = Column(DateTime, default=datetime.datetime.utcnow)
