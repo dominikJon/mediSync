@@ -1,108 +1,212 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Numeric, Text, Enum
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Numeric, Text, Table
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 import datetime
-import enum
 
 Base = declarative_base()
 
-class User(Base):
+# --- TABELE ASOCJACYJNE (Wiele-do-wielu) ---
+lekarz_specjalizacja_table = Table(
+    "lekarz_specjalizacja",
+    Base.metadata,
+    Column("lekarz_id", Integer, ForeignKey("lekarze.id"), primary_key=True),
+    Column("specjalizacja_id", Integer, ForeignKey("specjalizacje.id"), primary_key=True)
+)
+
+# --- SŁOWNIKI I SYSTEM ---
+
+class Rola(Base):
     __tablename__ = "role"
     id = Column(Integer, primary_key=True, index=True)
-    nazwa = Column(String, unique=True, nullable=False)
+    nazwa = Column(String(50), unique=True, nullable=False)
+
+    uzytkownicy = relationship("Uzytkownik", back_populates="rola")
 
 class Uzytkownik(Base):
-    __tablename__ = "uzytkownik"
+    __tablename__ = "uzytkownicy" 
     id = Column(Integer, primary_key=True, index=True)
+    rola_id = Column(Integer, ForeignKey("role.id"), nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     haslo_hash = Column(String(255), nullable=False)
-    rola_id = Column(Integer, ForeignKey("role.id"), nullable=False)
-    aktywny = Column(Integer, default=1)  # 1 - aktywny, 0 - nieaktywny
 
-# --- Profile Użytkownika ---
+    rola = relationship("Rola", back_populates="uzytkownicy")
+    pacjent_profil = relationship("Pacjent", back_populates="konto", uselist=False)
+    lekarz_profil = relationship("Lekarz", back_populates="konto", uselist=False)
 
-class Pacjent(Base):
-    __tablename__ = "pacjenci"
+# --- MODUŁ PLACÓWKI, ADRESÓW I PERSONELU ---
+
+class Adres(Base):
+    __tablename__ = "adresy"
     id = Column(Integer, primary_key=True, index=True)
-    uzytkownik_id = Column(Integer, ForeignKey("uzytkownik.id"), nullable=False)
-    pasel = Column(String(11), unique=True, index=True, nullable=False)
-    imie = Column(String(50), nullable=False)
-    nazwisko = Column(String(100), nullable=False)
-    telefon = Column(String(15))
+    miejscowosc = Column(String(100), nullable=False)
+    kod_pocztowy = Column(String(6), nullable=False)
+    ulica = Column(String(100), nullable=False)
+    nr_domu = Column(String(10), nullable=False)
+    nr_lokalu = Column(String(10), nullable=True)
+
+    pacjenci = relationship("Pacjent", back_populates="adres")
+
+class Placowka(Base):
+    __tablename__ = "placowki"
+    id = Column(Integer, primary_key=True, index=True)
+    nazwa = Column(String(200), nullable=False)
+    nr_ksiegi_rpwdl = Column(String(50), nullable=False)
+    autoryzacja_mz_do = Column(Date, nullable=True)
+    autoryzacja_nfz_do = Column(Date, nullable=True)
+
+    lekarze = relationship("Lekarz", back_populates="placowka")
+
+class Specjalizacja(Base):
+    __tablename__ = "specjalizacje"
+    id = Column(Integer, primary_key=True, index=True)
+    nazwa = Column(String(100), nullable=False)
+
+    lekarze = relationship("Lekarz", secondary=lekarz_specjalizacja_table, back_populates="specjalizacje")
 
 class Lekarz(Base):
     __tablename__ = "lekarze"
     id = Column(Integer, primary_key=True, index=True)
-    uzytkownik_id = Column(Integer, ForeignKey("uzytkownik.id"), nullable=False)
+    uzytkownik_id = Column(Integer, ForeignKey("uzytkownicy.id"), nullable=False)
+    placowka_id = Column(Integer, ForeignKey("placowki.id"), nullable=False)
+    npwz = Column(String(7), unique=True, nullable=False)
+    status_npwz = Column(String(50), nullable=False)  
+    waznosc_oc = Column(Date, nullable=False) 
+
+    konto = relationship("Uzytkownik", back_populates="lekarz_profil")
+    placowka = relationship("Placowka", back_populates="lekarze")
+    specjalizacje = relationship("Specjalizacja", secondary=lekarz_specjalizacja_table, back_populates="lekarze")
+    grafiki = relationship("GrafikPracy", back_populates="lekarz")
+
+# --- PROFILE UŻYTKOWNIKA ---
+
+class Pacjent(Base):
+    __tablename__ = "pacjenci"
+    id = Column(Integer, primary_key=True, index=True)
+    uzytkownik_id = Column(Integer, ForeignKey("uzytkownicy.id"), nullable=False)
+    adres_id = Column(Integer, ForeignKey("adresy.id"), nullable=True)
+    pesel = Column(String(11), unique=True, index=True, nullable=False) 
     imie = Column(String(50), nullable=False)
     nazwisko = Column(String(100), nullable=False)
-    npwz = Column(String(7), unique=True, nullable=False)
-    data_waznosci_oc = Column(Date, nullable=False)
-    numer_uprawnien = Column(String(20), unique=True, index=True, nullable=False)
+    telefon = Column(String(15))
 
-# --- Harmonogramy i Wizyty ---
+    konto = relationship("Uzytkownik", back_populates="pacjent_profil")
+    adres = relationship("Adres", back_populates="pacjenci")
+    wizyty = relationship("Wizyta", back_populates="pacjent")
+    upowaznienia = relationship("UpowaznienieMedyczne", back_populates="pacjent")
+    zgody = relationship("Zgoda", back_populates="pacjent")
 
-class Gabinet(Base):
-    __tablename__ = "gabinet"
-    id = Column(Integer, primary_key=True, index=True)
-    nazwa = Column(String(10), nullable=False, unique=True)
-    status = Column(String(20), default="Dostępny")
-
-class GrafikPracy(Base):
-    __tablename__ = "grafik_pracy"
-    id = Column(Integer, primary_key=True, index=True)
-    lekarz_id = Column(Integer, ForeignKey("lekarze.id"), nullable=False)
-    gabinet_id = Column(Integer, ForeignKey("gabinet.id"), nullable=False)
-    termin_od = Column(DateTime, nullable=False)
-    termin_do = Column(DateTime, nullable=False)
-    zarezrwany = Column(Integer, default=0)  # 0 - wolny, 1 - zarezerwowany
-
-class StatusWizyty(enum.Enum):
-    ZAPLANOWANA = "Zaplanowana"
-    W_TRAKCIE = "W trakcie"
-    ODWOLANA = "Odwołana"
-    ZAKONCZONA = "Zakończona"
-
-class Wizyta(Base):
-    __tablename__ = "wizyta"
+class Zgoda(Base):
+    __tablename__ = "zgody"
     id = Column(Integer, primary_key=True, index=True)
     pacjent_id = Column(Integer, ForeignKey("pacjenci.id"), nullable=False)
-    grafik_pracy_id = Column(Integer, ForeignKey("grafik_pracy.id"), nullable=False)
-    status = Column(Enum(StatusWizyty), default=StatusWizyty.ZAPLANOWANA)
-    data_utworzenia = Column(DateTime, default=datetime.datetime.utcnow)
+    typ_zgody = Column(String(100), nullable=False)
+    tresc_zgody = Column(Text, nullable=False) 
+    data_wyrazenia = Column(DateTime, default=datetime.datetime.utcnow)
+    data_wycofania = Column(DateTime, nullable=True)  
 
-# --- EDM, JAKŚĆ i PRAWO ---
+    pacjent = relationship("Pacjent", back_populates="zgody")
+
+class UpowaznienieMedyczne(Base): # 
+    __tablename__ = "upowaznienia_medyczne"
+    id = Column(Integer, primary_key=True, index=True)
+    pacjent_id = Column(Integer, ForeignKey("pacjenci.id"), nullable=False)
+    imie = Column(String(50), nullable=False)
+    nazwisko = Column(String(100), nullable=False)
+    pesel = Column(String(11), nullable=False)
+
+    pacjent = relationship("Pacjent", back_populates="upowaznienia")
+
+# --- HARMONOGRAMY I WIZYTY ---
+
+class Gabinet(Base):
+    __tablename__ = "gabinety"
+    id = Column(Integer, primary_key=True, index=True)
+    numer = Column(String(10), nullable=False, unique=True) 
+    status = Column(String(20), default="Dostępny")
+
+    grafiki = relationship("GrafikPracy", back_populates="gabinet")
+
+class GrafikPracy(Base):
+    __tablename__ = "grafiki_pracy"
+    id = Column(Integer, primary_key=True, index=True)
+    lekarz_id = Column(Integer, ForeignKey("lekarze.id"), nullable=False)
+    gabinet_id = Column(Integer, ForeignKey("gabinety.id"), nullable=False)
+    termin_od = Column(DateTime, nullable=False)
+    termin_do = Column(DateTime, nullable=False)
+
+    lekarz = relationship("Lekarz", back_populates="grafiki")
+    gabinet = relationship("Gabinet", back_populates="grafiki")
+    wizyty = relationship("Wizyta", back_populates="grafik", uselist=False)
+
+class Wizyta(Base):
+    __tablename__ = "wizyty"
+    id = Column(Integer, primary_key=True, index=True)
+    pacjent_id = Column(Integer, ForeignKey("pacjenci.id"), nullable=False)
+    grafik_id = Column(Integer, ForeignKey("grafiki_pracy.id"), unique=True, nullable=False)
+    cennik_id = Column(Integer, ForeignKey("cennik.id"), nullable=False)
+    status = Column(String(50), default="Zaplanowana") 
+
+    pacjent = relationship("Pacjent", back_populates="wizyty")
+    grafik = relationship("GrafikPracy", back_populates="wizyty")
+    cennik = relationship("Cennik", back_populates="wizyty")
+    dokumentacja = relationship("DokumentacjaMedyczna", back_populates="wizyta", uselist=False)
+    transakcja = relationship("Transakcja", back_populates="wizyta", uselist=False) 
+
+# --- EDM, JAKOŚĆ I PRAWO ---
+
+class SlownikICD10(Base):
+    __tablename__ = "slownik_icd10"
+    kod = Column(String(10), primary_key=True)
+    nazwa = Column(String(255), nullable=False)
+
+    dokumentacje = relationship("DokumentacjaMedyczna", back_populates="icd10")
 
 class DokumentacjaMedyczna(Base):
     __tablename__ = "dokumentacja_medyczna"
     id = Column(Integer, primary_key=True, index=True)
     wizyta_id = Column(Integer, ForeignKey("wizyty.id"), unique=True, nullable=False)
-    wywiad = Column(JSONB, nullable=True) # <-- CZYSTY JSONB (wymóg dokumentacji)
-    kod_icd10 = Column(String(10), nullable=True) # Diagnoza
-    data_wpisu = Column(DateTime, default=datetime.datetime.utcnow)
+    kod_icd10 = Column(String(10), ForeignKey("slownik_icd10.kod"), nullable=True)
+    wywiad_lekarski = Column(JSONB, nullable=True) 
+
+    wizyta = relationship("Wizyta", back_populates="dokumentacja")
+    icd10 = relationship("SlownikICD10", back_populates="dokumentacje")
 
 class ZdarzenieNiepozadane(Base):
     __tablename__ = "zdarzenia_niepozadane"
     id = Column(Integer, primary_key=True, index=True)
-    pacjent_id = Comlumn(Integer, ForeignKey("pacjenci.id"), nullable=False)
-    imie_upowaznionego = Column(String(50), nullable=False)
-    nazwisko_upowaznionego = Column(String(100), nullable=False)
-    pesel_upowaznionego = Column(String(11), nullable=False)
+    wizyta_id = Column(Integer, ForeignKey("wizyty.id"), nullable=False)
+    kategoria_bledu = Column(String(100), nullable=False)
+    opis_incydentu = Column(Text, nullable=False)
+    data_zgloszenia = Column(DateTime, default=datetime.datetime.utcnow)    
+    status_wyjasnienia = Column(String(50), default="Do wyjaśnienia")
 
-# --- Finanse ---
+class LogiAudytowe(Base):
+    __tablename__ = "logi_audytowe"
+    id = Column(Integer, primary_key=True, index=True)
+    tabela = Column(String(50), nullable=False)
+    operacja = Column(String(50), nullable=False)
+    kto_zmienil = Column(Integer, nullable=False)
+    data_zmiany = Column(DateTime, default=datetime.datetime.utcnow)
+    stare_dane = Column(JSONB, nullable=True)
+    nowe_dane = Column(JSONB, nullable=True)
+        
+# --- FINANSE ---
 class Cennik(Base):
     __tablename__ = "cennik"
     id = Column(Integer, primary_key=True, index=True)
     nazwa_uslugi = Column(String(150), nullable=False)
     cena = Column(Numeric(10, 2), nullable=False)
-    data_od = Column(Date, nullable=False)
-    data_do = Column(Date, nullable=True)
+    data_od = Column(DateTime, nullable=False) 
+    data_do = Column(DateTime, nullable=True) 
+
+    wizyty = relationship("Wizyta", back_populates="cennik")
 
 class Transakcja(Base):
     __tablename__ = "transakcje"
     id = Column(Integer, primary_key=True, index=True)
     wizyta_id = Column(Integer, ForeignKey("wizyty.id"), unique=True, nullable=False)
-    cennik_id = Column(Integer, ForeignKey("cennik.id"), nullable=False)
     kwota = Column(Numeric(10, 2), nullable=False)
     metoda_platnosci = Column(String(50), nullable=False)
-    data_platnosci = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(String(50), default="Oczekująca")  
+
+    wizyta = relationship("Wizyta", back_populates="transakcja")
