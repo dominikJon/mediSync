@@ -1,21 +1,31 @@
 <script setup lang="ts">
-// Dodaliśmy ikony (emoji) do naszej tablicy z menu
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+
+const router = useRouter()
+const authStore = useAuthStore()
+
+// Menu nawigacyjne
 const menuItems = [
   { name: 'Pulpit', path: '/', icon: '🏠' },
   { name: 'Harmonogram', path: '/schedule', icon: '📆' },
   { name: 'EDM / Kartoteka', path: '/records', icon: '📁' },
   { name: 'Raporty', path: '/reports', icon: '📊' }
 ]
+
+// Funkcja wylogowania
+const handleLogout = () => {
+  authStore.logout()
+  router.push('/login')
+}
 </script>
 
 <template>
   <aside class="sidebar">
-    <!-- Górna sekcja: Dwukolorowe Logo -->
     <div class="logo">
       <h2><span class="text-blue">Medi</span><span class="text-green">Sync</span></h2>
     </div>
     
-    <!-- Środkowa sekcja: Nawigacja do lewej -->
     <nav class="nav-menu">
       <RouterLink 
         v-for="item in menuItems" 
@@ -28,11 +38,23 @@ const menuItems = [
         {{ item.name }}
       </RouterLink>
     </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="avatar">👨‍⚕️</div>
+        <div class="user-details">
+          <span class="user-name">{{ authStore.user || 'dr Nikodem Bulanda' }}</span>
+          <span class="user-role">Lekarz</span>
+        </div>
+      </div>
+      <button @click="handleLogout" class="btn-logout">
+        <span class="icon">🚪</span> Wyloguj się
+      </button>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-/* Jasny motyw paska bocznego */
 .sidebar {
   width: 260px;
   background-color: #ffffff;
@@ -40,15 +62,15 @@ const menuItems = [
   height: 100vh;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box; /* Zapewnia, że padding nie psuje szerokości */
+  box-sizing: border-box;
+  position: sticky;
+  top: 0;
 }
 
-/* Sekcja Logo */
 .logo {
   padding: 24px;
   text-align: center;
   border-bottom: 1px solid #e0e0e0;
-  margin-bottom: 8px; /* Odstęp między linią a pierwszym linkiem */
 }
 
 .logo h2 {
@@ -57,23 +79,17 @@ const menuItems = [
   font-weight: bold;
 }
 
-.text-blue {
-  color: #0056b3; /* Głęboki niebieski */
-  font-weight: 500;
-}
+.text-blue { color: #0056b3; }
+.text-green { color: #28a745; }
 
-.text-green {
-  color: #28a745; /* Medyczna zieleń */
-  font-weight: 500;
-}
-
-/* Menu nawigacyjne */
+/* Kluczowe: nav-menu rośnie, wypychając footer na dół */
 .nav-menu {
   display: flex;
   flex-direction: column;
+  flex: 1; 
+  padding-top: 8px;
 }
 
-/* Pojedynczy link */
 .nav-link {
   display: flex;
   align-items: center;
@@ -82,24 +98,83 @@ const menuItems = [
   padding: 16px 24px;
   font-size: 16px;
   font-weight: 600;
-  border-right: 4px solid transparent; /* Niewidzialny pasek, żeby tekst nie skakał po najechaniu */
-  transition: background-color 0.2s;
+  border-right: 4px solid transparent;
+  transition: all 0.2s;
 }
 
 .nav-link:hover {
-  background-color: #f8f9fa; /* Delikatne podświetlenie po najechaniu myszką */
+  background-color: #f8f9fa;
 }
 
-/* Ikonki */
+.nav-link.active {
+  background-color: #EEF4FB;
+  color: #0056b3;
+  border-right: 4px solid #0056b3;
+}
+
 .icon {
   margin-right: 12px;
   font-size: 20px;
 }
 
-/* Wygląd AKTYWNEJ zakładki (to co na Twoim screenie) */
-.nav-link.active {
-  background-color: #EEF4FB; /* Jasnoniebieskie tło */
-  color: #0056b3; /* Niebieski tekst */
-  border-right: 4px solid #0056b3; /* Gruby niebieski pasek po prawej stronie */
+/* Sekcja użytkownika na dole */
+.sidebar-footer {
+  padding: 20px;
+  border-top: 1px solid #e0e0e0;
+  background-color: #fcfcfc;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  background-color: #e2e8f0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-right: 12px;
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.user-name {
+  font-size: 14px;
+  font-weight: bold;
+  color: #1e293b;
+}
+
+.user-role {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.btn-logout {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background-color: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #ef4444;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-logout:hover {
+  background-color: #fee2e2;
+  border-color: #ef4444;
 }
 </style>
