@@ -9,7 +9,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 if not DB_PASSWORD:
     raise ValueError("Nie można znaleźć hasła do bazy danych. Upewnij się, że plik .env zawiera DB_PASSWORD.")
 
-SQLALCHEMY_DATABASE_URL = f"postgresql://admin:{DB_PASSWORD}@localhost:5432/medisync"
+SQLALCHEMY_DATABASE_URL = f"postgresql://admin:{DB_PASSWORD}@db:5432/medisync"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
