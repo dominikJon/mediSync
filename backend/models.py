@@ -41,7 +41,7 @@ class Adres(Base):
     id = Column(Integer, primary_key=True, index=True)
     miejscowosc = Column(String(100), nullable=False)
     kod_pocztowy = Column(String(6), nullable=False)
-    ulica = Column(String(100), nullable=False)
+    ulica = Column(String(100), nullable=True)
     nr_domu = Column(String(10), nullable=False)
     nr_lokalu = Column(String(10), nullable=True)
 

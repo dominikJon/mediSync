@@ -60,8 +60,14 @@ router.beforeEach((to) => {
   const authStore = useAuthStore()
   
   // jeśli strona wymaga tokena a użytkownik nie jest zalogowany:
-  if (to.name !== 'login' && to.name !== 'register' && !authStore.isAuthenticated) {
-    return { name: 'login' } // wyrzuć do panelu logowania
+  if (
+    authStore.isAuthenticated &&
+    authStore.user?.profil_uzupelniony === false &&
+    to.name !== 'complete-profile' &&
+    to.name !== 'login' &&
+    to.name !== 'register'
+  ) {
+    return { name: 'complete-profile' }
   }
   // brak return = przepuść
 })

@@ -2,14 +2,15 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import axios from 'axios'
  
-// ── Typy ──────────────────────────────────────────────────────────────────────
+//Typy
 interface Uzytkownik {
   id: number
   email: string
   rola: string
+  profil_uzupelniony: boolean
 }
  
-// ── Store ─────────────────────────────────────────────────────────────────────
+//Store
 export const useAuthStore = defineStore('auth', () => {
   // Stan
   const token = ref<string | null>(localStorage.getItem('token'))

@@ -32,7 +32,6 @@ watch(brak_ulicy, (nowaWartosc) => {
 const handleSaveProfile = async () => {
   blad.value = ''
 
-  // Walidacja frontowa 
   if (!imie.value || !nazwisko.value || !pesel.value || !telefon.value || !miejscowosc.value || !kod_pocztowy.value || !nr_domu.value) {
     blad.value = 'Wypełnij wszystkie pola oznaczone gwiazdką (*)!'
     return
@@ -43,34 +42,50 @@ const handleSaveProfile = async () => {
     return
   }
 
+  if (!/^\d{2}-\d{3}$/.test(kod_pocztowy.value)) {
+    blad.value = 'Kod pocztowy musi być w formacie XX-XXX (np. 00-001).'
+    return
+  }
+
+  if (!brak_ulicy.value && !ulica.value) {
+    blad.value = 'Podaj ulicę lub zaznacz "Brak nazwy ulicy".'
+    return
+  }
+
   ladowanie.value = true
 
   try {
     const payload = {
+      uzytkownik_id: authStore.user?.id,  // ← id z Pinia store
       imie: imie.value,
       nazwisko: nazwisko.value,
       pesel: pesel.value,
       telefon: telefon.value,
       miejscowosc: miejscowosc.value,
       kod_pocztowy: kod_pocztowy.value,
-      ulica: brak_ulicy.value || ulica.value === '' ? null : ulica.value,
+      ulica: brak_ulicy.value ? null : ulica.value,
       nr_domu: nr_domu.value,
       nr_lokalu: nr_lokalu.value === '' ? null : nr_lokalu.value,
       brak_ulicy: brak_ulicy.value
     }
 
-    // do odkomentowania po dodaniu api
-    /*
-    await axios.post('/api/kartoteka', payload)
-    */
+    await axios.post('/api/complete-profile', payload)
 
-    console.log("Wysyłane dane do backendu:", payload)
-    
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    // Zaktualizuj store — profil uzupełniony
+    if (authStore.user) {
+      authStore.user.profil_uzupelniony = true
+    }
 
     router.push('/')
-  } catch (error) {
-    blad.value = 'Wystąpił błąd podczas zapisywania danych.'
+
+  } catch (error: any) {
+    if (error.response?.status === 409) {
+      blad.value = 'Pacjent z tym numerem PESEL już istnieje.'
+    } else if (error.response?.status === 422) {
+      blad.value = error.response.data.detail
+    } else {
+      blad.value = 'Wystąpił błąd podczas zapisywania danych.'
+    }
     console.error(error)
   } finally {
     ladowanie.value = false

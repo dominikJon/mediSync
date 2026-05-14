@@ -43,7 +43,7 @@ const handleLogout = () => {
       <div class="user-info">
         <div class="avatar">👨‍⚕️</div>
         <div class="user-details">
-          <span class="user-name">{{ authStore.user || 'dr Nikodem Bulanda' }}</span>
+          <span class="user-name">{{ authStore.user }}</span>
           <span class="user-role">Lekarz</span>
         </div>
       </div>
