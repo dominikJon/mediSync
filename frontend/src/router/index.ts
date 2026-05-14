@@ -6,6 +6,7 @@ import RegisterView from '../views/RegisterView.vue'
 import ScheduleView from '../views/ScheduleView.vue'
 import RecordsView from '../views/RecordsView.vue'
 import ReportsView from '../views/ReportsView.vue'
+import CompleteProfileView from '../views/CompleteProfileView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -43,6 +44,12 @@ const router = createRouter({
       path: '/reports',
       name: 'reports',
       component: ReportsView,
+      meta: { hideSidebar: true }
+    },
+    {
+      path: '/complete-profile',
+      name: 'complete-profile',
+      component: CompleteProfileView,
       meta: { hideSidebar: true }
     }
   ]
