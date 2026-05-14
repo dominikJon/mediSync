@@ -49,15 +49,14 @@ const router = createRouter({
 })
 
 // 'bramkarz' funkcja wywolywana przed kazda zmiana strony
-router.beforeEach((to, from, next) => {
+router.beforeEach((to) => {
   const authStore = useAuthStore()
   
-  // jesli strona wymaga tokena a uzytkownik nie jest zalogowany:
+  // jeśli strona wymaga tokena a użytkownik nie jest zalogowany:
   if (to.name !== 'login' && to.name !== 'register' && !authStore.isAuthenticated) {
-    next({ name: 'login' }) // wyrzuc do panelu logowania
-  } else {
-    next() // wpusc
+    return { name: 'login' } // wyrzuć do panelu logowania
   }
+  // brak return = przepuść
 })
 
 export default router
