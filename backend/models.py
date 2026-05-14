@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Numeric, Text, Table
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Numeric, Text, Table, Boolean
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 import datetime
@@ -28,6 +28,7 @@ class Uzytkownik(Base):
     rola_id = Column(Integer, ForeignKey("role.id"), nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     haslo_hash = Column(String(255), nullable=False)
+    profil_uzupelniony = Column(Boolean, default=False)  
 
     rola = relationship("Rola", back_populates="uzytkownicy")
     pacjent_profil = relationship("Pacjent", back_populates="konto", uselist=False)
@@ -115,6 +116,8 @@ class UpowaznienieMedyczne(Base): #
     pesel = Column(String(11), nullable=False)
 
     pacjent = relationship("Pacjent", back_populates="upowaznienia")
+
+    
 
 # --- HARMONOGRAMY I WIZYTY ---
 
