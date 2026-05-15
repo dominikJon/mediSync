@@ -1,19 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
-// Menu nawigacyjne
-const menuItems = [
+// Menu podstawowe dla wszystkich
+const menuPodstawowe = [
   { name: 'Pulpit', path: '/', icon: '🏠' },
   { name: 'Harmonogram', path: '/schedule', icon: '📆' },
   { name: 'EDM / Kartoteka', path: '/records', icon: '📁' },
-  { name: 'Raporty', path: '/reports', icon: '📊' }
+  { name: 'Raporty', path: '/reports', icon: '📊' },
 ]
 
-// Funkcja wylogowania
+// Menu tylko dla admina
+const menuAdmin = [
+  { name: 'Użytkownicy', path: '/admin/users', icon: '👥' },
+  { name: 'Dodaj lekarza', path: '/admin/add-doctor', icon: '👨‍⚕️' },
+]
+
+const isAdmin = computed(() => authStore.user?.rola === 'admin')
+
 const handleLogout = () => {
   authStore.logout()
   router.push('/login')
@@ -25,13 +33,31 @@ const handleLogout = () => {
     <div class="logo">
       <h2><span class="text-blue">Medi</span><span class="text-green">Sync</span></h2>
     </div>
-    
+
     <nav class="nav-menu">
-      <RouterLink 
-        v-for="item in menuItems" 
-        :key="item.path" 
+      <!-- Menu podstawowe -->
+      <RouterLink
+        v-for="item in menuPodstawowe"
+        :key="item.path"
         :to="item.path"
         class="nav-link"
+        active-class="active"
+      >
+        <span class="icon">{{ item.icon }}</span>
+        {{ item.name }}
+      </RouterLink>
+
+      <!-- Sekcja admina — widoczna tylko dla roli admin -->
+      <div v-if="isAdmin" class="section-divider">
+        <span>Panel Admina</span>
+      </div>
+
+      <RouterLink
+        v-if="isAdmin"
+        v-for="item in menuAdmin"
+        :key="item.path"
+        :to="item.path"
+        class="nav-link admin-link"
         active-class="active"
       >
         <span class="icon">{{ item.icon }}</span>
@@ -42,17 +68,16 @@ const handleLogout = () => {
     <div class="sidebar-footer">
       <div class="user-info">
         <div class="avatar">
-          {{ authStore.user?.rola === 'lekarz' ? '👨‍⚕️' : '👤' }}
+          {{ authStore.user?.rola === 'lekarz' ? '👨‍⚕️' : authStore.user?.rola === 'admin' ? '⚙️' : '👤' }}
         </div>
         <div class="user-details">
           <span class="user-name">
             {{ authStore.user?.imie ? `${authStore.user.imie} ${authStore.user.nazwisko}` : authStore.user?.email }}
           </span>
-  
           <span class="user-role">
             {{ authStore.user?.rola ? authStore.user.rola.charAt(0).toUpperCase() + authStore.user.rola.slice(1) : 'Gość' }}
           </span>
-    </div>
+        </div>
       </div>
       <button @click="handleLogout" class="btn-logout">
         <span class="icon">🚪</span> Wyloguj się
@@ -89,12 +114,12 @@ const handleLogout = () => {
 .text-blue { color: #0056b3; }
 .text-green { color: #28a745; }
 
-/* Kluczowe: nav-menu rośnie, wypychając footer na dół */
 .nav-menu {
   display: flex;
   flex-direction: column;
-  flex: 1; 
+  flex: 1;
   padding-top: 8px;
+  overflow-y: auto;
 }
 
 .nav-link {
@@ -103,7 +128,7 @@ const handleLogout = () => {
   text-decoration: none;
   color: #333333;
   padding: 16px 24px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   border-right: 4px solid transparent;
   transition: all 0.2s;
@@ -119,12 +144,31 @@ const handleLogout = () => {
   border-right: 4px solid #0056b3;
 }
 
+.admin-link.active {
+  background-color: #fef3c7;
+  color: #92400e;
+  border-right: 4px solid #f59e0b;
+}
+
+.admin-link:hover {
+  background-color: #fffbeb;
+}
+
+.section-divider {
+  padding: 8px 24px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 8px;
+}
+
 .icon {
   margin-right: 12px;
   font-size: 20px;
 }
 
-/* Sekcja użytkownika na dole */
 .sidebar-footer {
   padding: 20px;
   border-top: 1px solid #e0e0e0;
@@ -147,17 +191,22 @@ const handleLogout = () => {
   justify-content: center;
   font-size: 24px;
   margin-right: 12px;
+  flex-shrink: 0;
 }
 
 .user-details {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .user-name {
   font-size: 14px;
   font-weight: bold;
   color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .user-role {

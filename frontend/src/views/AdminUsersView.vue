@@ -1,0 +1,222 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import axios from 'axios'
+
+interface Uzytkownik {
+  id: number
+  email: string
+  rola: string
+  profil_uzupelniony: boolean
+  imie: string | null
+  nazwisko: string | null
+  pesel: string | null
+}
+
+const uzytkownicy = ref<Uzytkownik[]>([])
+const ladowanie = ref(true)
+const blad = ref('')
+
+const pobierzUzytkownikow = async () => {
+  try {
+    const response = await axios.get('/api/admin/users')
+    uzytkownicy.value = response.data.uzytkownicy
+  } catch (error: any) {
+    if (error.response?.status === 403) {
+      blad.value = 'Brak uprawnień do tej strony.'
+    } else {
+      blad.value = 'Błąd podczas pobierania listy użytkowników.'
+    }
+  } finally {
+    ladowanie.value = false
+  }
+}
+
+const roleKolor = (rola: string) => {
+  switch (rola) {
+    case 'admin': return 'badge-admin'
+    case 'lekarz': return 'badge-lekarz'
+    default: return 'badge-pacjent'
+  }
+}
+
+onMounted(pobierzUzytkownikow)
+</script>
+
+<template>
+  <div class="page">
+    <div class="page-header">
+      <h1>Użytkownicy systemu</h1>
+      <RouterLink to="/admin/add-doctor" class="btn-primary">
+        + Dodaj lekarza
+      </RouterLink>
+    </div>
+
+    <div v-if="ladowanie" class="loading">Ładowanie...</div>
+
+    <div v-else-if="blad" class="error-box">{{ blad }}</div>
+
+    <div v-else class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Email</th>
+            <th>Imię i nazwisko</th>
+            <th>PESEL</th>
+            <th>Rola</th>
+            <th>Kartoteka</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="u in uzytkownicy" :key="u.id">
+            <td class="id-cell">{{ u.id }}</td>
+            <td>{{ u.email }}</td>
+            <td>
+              {{ u.imie && u.nazwisko ? `${u.imie} ${u.nazwisko}` : '—' }}
+            </td>
+            <td>{{ u.pesel ?? '—' }}</td>
+            <td>
+              <span :class="['badge', roleKolor(u.rola)]">
+                {{ u.rola }}
+              </span>
+            </td>
+            <td>
+              <span :class="u.profil_uzupelniony ? 'status-ok' : 'status-brak'">
+                {{ u.profil_uzupelniony ? '✓ Uzupełniona' : '✗ Brak' }}
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.page {
+  padding: 32px;
+  max-width: 1100px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+}
+
+.btn-primary {
+  padding: 10px 20px;
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 14px;
+  transition: 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: #2563eb;
+}
+
+.loading {
+  color: #64748b;
+  padding: 20px;
+}
+
+.error-box {
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.table-wrapper {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table thead {
+  background-color: #f8fafc;
+}
+
+.table th {
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+}
+
+.table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.id-cell {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-admin {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge-lekarz {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge-pacjent {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-ok {
+  color: #16a34a;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.status-brak {
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 13px;
+}
+</style>
