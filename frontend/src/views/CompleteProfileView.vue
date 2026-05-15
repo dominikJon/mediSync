@@ -73,7 +73,11 @@ const handleSaveProfile = async () => {
 
     // Zaktualizuj store — profil uzupełniony
     if (authStore.user) {
+      authStore.user.imie = imie.value           // imie 
+      authStore.user.nazwisko = nazwisko.value   // nazwisko
       authStore.user.profil_uzupelniony = true
+
+      localStorage.setItem('user_data', JSON.stringify(authStore.user)) //aktualizacja danych uzytkownika w localstorage
     }
 
     router.push('/')
@@ -148,11 +152,11 @@ const handleSaveProfile = async () => {
 
         <div class="form-group">
           <label>Numer domu *</label>
-          <input v-model="nr_domu" type="text" placeholder="12" />
+          <input v-model="nr_domu" type="text" placeholder="12" @keyup.enter="handleSaveProfile" />
         </div>
         <div class="form-group">
           <label>Numer lokalu</label>
-          <input v-model="nr_lokalu" type="text" placeholder="4 (opcjonalnie)" />
+          <input v-model="nr_lokalu" type="text" placeholder="4 (opcjonalnie)" @keyup.enter="handleSaveProfile" />
         </div>
       </div>
 

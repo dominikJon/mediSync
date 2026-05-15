@@ -37,7 +37,7 @@ const handleLogin = async () => {
     
     <div class="form-group">
       <label>Hasło</label>
-      <input v-model="password" type="password" placeholder="Wpisz hasło" />
+      <input v-model="password" type="password" placeholder="Wpisz hasło" @keyup.enter="handleLogin" />
     </div>
     
     <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>

@@ -41,11 +41,18 @@ const handleLogout = () => {
 
     <div class="sidebar-footer">
       <div class="user-info">
-        <div class="avatar">👨‍⚕️</div>
-        <div class="user-details">
-          <span class="user-name">{{ authStore.user }}</span>
-          <span class="user-role">Lekarz</span>
+        <div class="avatar">
+          {{ authStore.user?.rola === 'lekarz' ? '👨‍⚕️' : '👤' }}
         </div>
+        <div class="user-details">
+          <span class="user-name">
+            {{ authStore.user?.imie ? `${authStore.user.imie} ${authStore.user.nazwisko}` : authStore.user?.email }}
+          </span>
+  
+          <span class="user-role">
+            {{ authStore.user?.rola ? authStore.user.rola.charAt(0).toUpperCase() + authStore.user.rola.slice(1) : 'Gość' }}
+          </span>
+    </div>
       </div>
       <button @click="handleLogout" class="btn-logout">
         <span class="icon">🚪</span> Wyloguj się

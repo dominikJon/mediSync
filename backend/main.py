@@ -63,9 +63,11 @@ def stworz_token(dane: dict) -> str:
 @app.post("/api/login")
 def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
     zapytanie_sql = text("""
-        SELECT u.id, u.email, u.haslo_hash, u.profil_uzupelniony, r.nazwa AS rola_nazwa
+        SELECT u.id, u.email, u.haslo_hash, u.profil_uzupelniony, r.nazwa AS rola_nazwa,
+               p.imie, p.nazwisko
         FROM uzytkownicy u
         JOIN role r ON u.rola_id = r.id
+        LEFT JOIN pacjenci p ON u.id = p.uzytkownik_id
         WHERE u.email = :email
     """)
 
@@ -83,6 +85,7 @@ def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
         "rola": wynik.rola_nazwa,
     })
 
+    # imie i nazwisko zwracane pod warunkiem ze uzupelnione
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -91,6 +94,8 @@ def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
             "email": wynik.email,
             "rola": wynik.rola_nazwa,
             "profil_uzupelniony": wynik.profil_uzupelniony,
+            "imie": wynik.imie,        # dodane
+            "nazwisko": wynik.nazwisko # dodane
         }
     }
 

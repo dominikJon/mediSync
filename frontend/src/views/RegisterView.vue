@@ -77,7 +77,7 @@ const handleRegister = async () => {
 
     <div class="form-group">
       <label>Powtórz hasło</label>
-      <input v-model="confirmPassword" type="password" placeholder="Powtórz hasło" />
+      <input v-model="confirmPassword" type="password" placeholder="Powtórz hasło" @keyup.enter="handleRegister" />
     </div>
 
     <button @click="handleRegister" class="btn-primary" :disabled="ladowanie">
