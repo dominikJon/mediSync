@@ -14,62 +14,69 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: HomeView
+      component: HomeView,
+      meta: { requiresAuth: true }
     },
     {
       path: '/login',
       name: 'login',
       component: LoginView,
-      meta: { hideSidebar: true } 
+      meta: { hideSidebar: true, guestOnly: true }
     },
     {
       path: '/register',
       name: 'register',
       component: RegisterView,
-      meta: { hideSidebar: true }
+      meta: { hideSidebar: true, guestOnly: true }
     },
     {
       path: '/schedule',
       name: 'schedule',
       component: ScheduleView,
-      meta: { hideSidebar: true }
+      meta: { requiresAuth: true }
     },
-    { 
+    {
       path: '/records',
       name: 'records',
       component: RecordsView,
-      meta: { hideSidebar: true }
+      meta: { requiresAuth: true }
     },
     {
       path: '/reports',
       name: 'reports',
       component: ReportsView,
-      meta: { hideSidebar: true }
+      meta: { requiresAuth: true }
     },
     {
       path: '/complete-profile',
       name: 'complete-profile',
       component: CompleteProfileView,
-      meta: { hideSidebar: true }
+      meta: { hideSidebar: true, requiresAuth: true }
     }
   ]
 })
 
-// 'bramkarz' funkcja wywolywana przed kazda zmiana strony
 router.beforeEach((to) => {
   const authStore = useAuthStore()
-  
-  // jeśli strona wymaga tokena a użytkownik nie jest zalogowany:
+
+  // Zalogowany z nieuzupełnionym profilem → tylko /complete-profile
   if (
     authStore.isAuthenticated &&
     authStore.user?.profil_uzupelniony === false &&
-    to.name !== 'complete-profile' &&
-    to.name !== 'login' &&
-    to.name !== 'register'
+    to.name !== 'complete-profile'
   ) {
     return { name: 'complete-profile' }
   }
-  // brak return = przepuść
+
+  // Niezalogowany próbuje wejść na chronioną stronę → /login
+  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+    return { name: 'login' }
+  }
+
+  // Zalogowany próbuje wejść na /login lub /register → /
+  if (to.meta.guestOnly && authStore.isAuthenticated) {
+    return { name: 'home' }
+  }
 })
 
 export default router
