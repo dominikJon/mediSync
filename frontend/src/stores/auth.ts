@@ -7,6 +7,8 @@ interface Uzytkownik {
   id: number
   email: string
   rola: string
+  imie?: string      // Opcjonalne (pojawi się po uzupełnieniu profilu)
+  nazwisko?: string  // Opcjonalne
   profil_uzupelniony: boolean
 }
  
@@ -14,7 +16,9 @@ interface Uzytkownik {
 export const useAuthStore = defineStore('auth', () => {
   // Stan
   const token = ref<string | null>(localStorage.getItem('token'))
-  const user = ref<Uzytkownik | null>(null)
+  const user = ref<Uzytkownik | null>(
+    JSON.parse(localStorage.getItem('user_data') || 'null')
+  )
  
   // Przy starcie aplikacji — przywróć nagłówek jeśli token już istnieje w localStorage
   if (token.value) {
@@ -37,6 +41,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = response.data.uzytkownik
  
       localStorage.setItem('token', token.value as string)
+      localStorage.setItem('user_data', JSON.stringify(user.value)) // dane uzytkownika do localstorage
       axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
  
       return true
@@ -50,6 +55,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     user.value = null
     localStorage.removeItem('token')
+    localStorage.removeItem('user_data') // ← tego brakuje!
     delete axios.defaults.headers.common['Authorization']
   }
  
