@@ -55,15 +55,17 @@ const router = createRouter({
       component: CompleteProfileView,
       meta: { hideSidebar: true, requiresAuth: true }
     },
-    { 
+    {
       path: '/admin/users',
-      name: 'admin-users', 
-      component: AdminUsersView 
+      name: 'admin-users',
+      component: AdminUsersView,
+      meta: { requiresAuth: true }
     },
-    { 
-      path: '/admin/add-doctor', 
-      name: 'admin-add-doctor', 
-      component: AdminAddDoctorView 
+    {
+      path: '/admin/add-doctor',
+      name: 'admin-add-doctor',
+      component: AdminAddDoctorView,
+      meta: { requiresAuth: true }
     },
   ]
 })
@@ -71,21 +73,31 @@ const router = createRouter({
 router.beforeEach((to) => {
   const authStore = useAuthStore()
 
-  // Zalogowany z nieuzupełnionym profilem → tylko /complete-profile
+  // 1. Niezalogowany próbuje wejść na chronioną stronę → /login
+  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+    return { name: 'login' }
+  }
+
+  // 2. Zalogowany z nieuzupełnionym profilem → tylko /complete-profile
+  //    Używamy !profil_uzupelniony zamiast === false, żeby łapać też null/undefined
   if (
     authStore.isAuthenticated &&
-    authStore.user?.profil_uzupelniony === false &&
+    !authStore.user?.profil_uzupelniony &&
     to.name !== 'complete-profile'
   ) {
     return { name: 'complete-profile' }
   }
 
-  // Niezalogowany próbuje wejść na chronioną stronę → /login
-  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    return { name: 'login' }
+  // 3. Zalogowany z UZUPEŁNIONYM profilem nie powinien wchodzić na /complete-profile
+  if (
+    authStore.isAuthenticated &&
+    authStore.user?.profil_uzupelniony === true &&
+    to.name === 'complete-profile'
+  ) {
+    return { name: 'home' }
   }
 
-  // Zalogowany próbuje wejść na /login lub /register → /
+  // 4. Zalogowany próbuje wejść na /login lub /register → /
   if (to.meta.guestOnly && authStore.isAuthenticated) {
     return { name: 'home' }
   }
