@@ -194,6 +194,10 @@ def uzupelnij_kartoteke(request: KartotekaRequest, db: Session = Depends(get_db)
 class DodajLekarzaRequest(BaseModel):
     email: str
     haslo: str
+    imie: str          
+    nazwisko: str
+    pesel: Optional[str] = None
+    brak_peselu: bool = False
     npwz: str
     status_npwz: str
     waznosc_oc: str  # format YYYY-MM-DD
@@ -265,11 +269,19 @@ def dodaj_lekarza(
         raise HTTPException(status_code=409, detail="Email już istnieje")
 
     # Sprawdź czy NPWZ zajęty
+    # Sprawdź czy NPWZ zajęty
     if db.execute(text("SELECT id FROM lekarze WHERE npwz = :npwz"),
-                  {"npwz": request.npwz}).fetchone():
+              {"npwz": request.npwz}).fetchone():
         raise HTTPException(status_code=409, detail="Lekarz z tym NPWZ już istnieje")
 
-    # Sprawdź czy placówka istnieje
+    if not request.brak_peselu:
+        if not request.pesel or not request.pesel.isdigit() or len(request.pesel) != 11:
+            raise HTTPException(status_code=422, detail="PESEL musi składać się z 11 cyfr")
+        if db.execute(text("SELECT id FROM lekarze WHERE pesel = :pesel"),
+                  {"pesel": request.pesel}).fetchone():
+            raise HTTPException(status_code=409, detail="Lekarz z tym PESELem już istnieje")
+
+# Sprawdź czy placówka istnieje
     if not db.execute(text("SELECT id FROM placowki WHERE id = :id"),
                       {"id": request.placowka_id}).fetchone():
         raise HTTPException(status_code=404, detail="Placówka nie istnieje")
@@ -293,16 +305,19 @@ def dodaj_lekarza(
 
     # Utwórz profil lekarza
     nowy_lekarz = db.execute(text("""
-        INSERT INTO lekarze (uzytkownik_id, placowka_id, npwz, status_npwz, waznosc_oc)
-        VALUES (:uzytkownik_id, :placowka_id, :npwz, :status_npwz, :waznosc_oc)
-        RETURNING id
-    """), {
-        "uzytkownik_id": nowy_user.id,
-        "placowka_id": request.placowka_id,
-        "npwz": request.npwz,
-        "status_npwz": request.status_npwz,
-        "waznosc_oc": request.waznosc_oc,
-    }).fetchone()
+    INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
+    VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
+    RETURNING id
+"""), {
+    "uzytkownik_id": nowy_user.id,
+    "placowka_id": request.placowka_id,
+    "imie": request.imie,
+    "nazwisko": request.nazwisko,
+    "pesel": request.pesel if not request.brak_peselu else None,  # ← DODAJ
+    "npwz": request.npwz,
+    "status_npwz": request.status_npwz,
+    "waznosc_oc": request.waznosc_oc,
+}).fetchone()
 
     # Przypisz specjalizacje
     for spec_id in request.specjalizacje_ids:

@@ -7,6 +7,8 @@ const router = useRouter()
 
 const email = ref('')
 const haslo = ref('')
+const imie = ref('')
+const nazwisko = ref('')
 const npwz = ref('')
 const status_npwz = ref('aktywny')
 const waznosc_oc = ref('')
@@ -19,6 +21,9 @@ const specjalizacje = ref<{ id: number, nazwa: string }[]>([])
 const blad = ref('')
 const sukces = ref('')
 const ladowanie = ref(false)
+
+const pesel = ref('')
+const brak_peselu = ref(false)
 
 const pobierzDane = async () => {
   try {
@@ -46,7 +51,7 @@ const handleSubmit = async () => {
   blad.value = ''
   sukces.value = ''
 
-  if (!email.value || !haslo.value || !npwz.value || !waznosc_oc.value || !placowka_id.value) {
+  if (!email.value || !haslo.value || !imie.value || !nazwisko.value || !npwz.value || !waznosc_oc.value || !placowka_id.value) {
     blad.value = 'Wypełnij wszystkie wymagane pola.'
     return
   }
@@ -61,12 +66,23 @@ const handleSubmit = async () => {
     return
   }
 
+  if (!brak_peselu.value) {
+  if (!pesel.value || pesel.value.length !== 11 || !/^\d+$/.test(pesel.value)) {
+    blad.value = 'PESEL musi składać się z 11 cyfr.'
+    return
+  }
+}
+
   ladowanie.value = true
 
   try {
     await axios.post('/api/admin/add-doctor', {
       email: email.value,
       haslo: haslo.value,
+      imie: imie.value,
+      nazwisko: nazwisko.value,
+      pesel: brak_peselu.value ? null : pesel.value,
+      brak_peselu: brak_peselu.value,
       npwz: npwz.value,
       status_npwz: status_npwz.value,
       waznosc_oc: waznosc_oc.value,
@@ -78,6 +94,10 @@ const handleSubmit = async () => {
     // Wyczyść formularz
     email.value = ''
     haslo.value = ''
+    imie.value = ''
+    nazwisko.value = ''
+    pesel.value = ''
+    brak_peselu.value = false
     npwz.value = ''
     waznosc_oc.value = ''
     placowka_id.value = null
@@ -120,6 +140,33 @@ onMounted(pobierzDane)
         <div class="form-group">
           <label>Hasło *</label>
           <input v-model="haslo" type="password" placeholder="Min. 8 znaków" />
+        </div>
+
+        <div class="section-title full">Dane osobowe</div>
+
+        <div class="form-group">
+          <label>Imię *</label>
+          <input v-model="imie" type="text" placeholder="Jan" />
+        </div>
+        <div class="form-group">
+          <label>Nazwisko *</label>
+          <input v-model="nazwisko" type="text" placeholder="Kowalski" />
+        </div>
+
+        <div class="form-group full">
+          <label>PESEL <span class="hint">(11 cyfr)</span></label>
+          <input
+            v-model="pesel"
+            type="text"
+            maxlength="11"
+            placeholder="12345678901"
+            :disabled="brak_peselu"
+            :class="{ 'input-disabled': brak_peselu }"
+          />
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="brak_peselu" />
+             Lekarz zagraniczny — brak numeru PESEL
+          </label>
         </div>
 
         <div class="section-title full">Dane zawodowe</div>
@@ -325,6 +372,30 @@ onMounted(pobierzDane)
   font-size: 16px;
   cursor: pointer;
   transition: 0.2s;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.input-disabled {
+  background: #f1f5f9 !important;
+  color: #94a3b8 !important;
+  cursor: not-allowed !important;
 }
 
 .btn-primary:hover:not(:disabled) { background-color: #2563eb; }

@@ -68,7 +68,8 @@ class Lekarz(Base):
     __tablename__ = "lekarze"
     id = Column(Integer, primary_key=True, index=True)
     imie = Column(String(50), nullable=True)       
-    nazwisko = Column(String(100), nullable=True)  
+    nazwisko = Column(String(100), nullable=True)
+    pesel = Column(String(11), nullable=True)  
     uzytkownik_id = Column(Integer, ForeignKey("uzytkownicy.id"), nullable=False)
     placowka_id = Column(Integer, ForeignKey("placowki.id"), nullable=False)
     npwz = Column(String(7), unique=True, nullable=False)
