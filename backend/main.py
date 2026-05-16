@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from passlib.context import CryptContext
@@ -31,14 +31,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modele
+
+# ======== HELPERY WALIDACYJNE ========
+
+def waliduj_pesel(pesel: str) -> bool:
+    """Walidacja PESEL z cyfrą kontrolną (algorytm)."""
+    if not re.match(r"^\d{11}$", pesel):
+        return False
+    wagi = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3]
+    suma = sum(w * int(pesel[i]) for i, w in enumerate(wagi))
+    kontrolna = (10 - (suma % 10)) % 10
+    return kontrolna == int(pesel[10])
+
+
+REGEX_EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+REGEX_LITERY_PL = re.compile(r"^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s-]+$")
+REGEX_TELEFON = re.compile(r"^(\+48)?\d{9}$")
+REGEX_KOD_POCZTOWY = re.compile(r"^\d{2}-\d{3}$")
+REGEX_NR_DOMU = re.compile(r"^[a-zA-Z0-9\-\/]+$")
+REGEX_ZNAK_SPECJALNY = re.compile(r"[!@#$%^&*(),.?\":{}|<>_\-]")
+
+
+# ======== MODELE Z WALIDACJĄ ========
+
 class LoginRequest(BaseModel):
     email: str
     haslo: str
 
+    @field_validator("email")
+    @classmethod
+    def waliduj_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not REGEX_EMAIL.match(v):
+            raise ValueError("Nieprawidłowy format adresu email")
+        return v
+
+    @field_validator("haslo")
+    @classmethod
+    def waliduj_haslo_niepuste(cls, v: str) -> str:
+        if not v:
+            raise ValueError("Hasło jest wymagane")
+        return v
+
+
 class RejestracjaRequest(BaseModel):
     email: str
     haslo: str
+
+    @field_validator("email")
+    @classmethod
+    def waliduj_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not REGEX_EMAIL.match(v):
+            raise ValueError("Nieprawidłowy format adresu email")
+        return v
+
+    @field_validator("haslo")
+    @classmethod
+    def waliduj_haslo(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("Hasło musi mieć co najmniej 12 znaków")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną wielką literę")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną małą literę")
+        if not re.search(r"\d", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną cyfrę")
+        if not REGEX_ZNAK_SPECJALNY.search(v):
+            raise ValueError("Hasło musi zawierać co najmniej jeden znak specjalny")
+        return v
+
 
 class KartotekaRequest(BaseModel):
     uzytkownik_id: int
@@ -53,13 +115,81 @@ class KartotekaRequest(BaseModel):
     nr_lokalu: Optional[str] = None
     brak_ulicy: bool = False
 
-# Helpery
+    @field_validator("imie", "nazwisko")
+    @classmethod
+    def waliduj_imie_nazwisko(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Musi mieć co najmniej 2 znaki")
+        if not REGEX_LITERY_PL.match(v):
+            raise ValueError("Dozwolone są tylko litery, spacja i myślnik")
+        return v
+
+    @field_validator("pesel")
+    @classmethod
+    def waliduj_pesel_field(cls, v: str) -> str:
+        v = v.strip()
+        if not re.match(r"^\d{11}$", v):
+            raise ValueError("PESEL musi składać się z dokładnie 11 cyfr")
+        if not waliduj_pesel(v):
+            raise ValueError("Nieprawidłowy PESEL — błędna cyfra kontrolna")
+        return v
+
+    @field_validator("telefon")
+    @classmethod
+    def waliduj_telefon(cls, v: str) -> str:
+        v = v.replace(" ", "")
+        if not REGEX_TELEFON.match(v):
+            raise ValueError("Telefon: 9 cyfr lub +48 i 9 cyfr")
+        return v
+
+    @field_validator("miejscowosc")
+    @classmethod
+    def waliduj_miejscowosc(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Miejscowość musi mieć co najmniej 2 znaki")
+        return v
+
+    @field_validator("kod_pocztowy")
+    @classmethod
+    def waliduj_kod_pocztowy(cls, v: str) -> str:
+        v = v.strip()
+        if not REGEX_KOD_POCZTOWY.match(v):
+            raise ValueError("Kod pocztowy musi być w formacie XX-XXX")
+        return v
+
+    @field_validator("nr_domu")
+    @classmethod
+    def waliduj_nr_domu(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Numer domu jest wymagany")
+        if not REGEX_NR_DOMU.match(v):
+            raise ValueError("Numer domu może zawierać tylko litery, cyfry, myślnik i ukośnik")
+        return v
+
+    @model_validator(mode="after")
+    def waliduj_ulice(self):
+        if not self.brak_ulicy:
+            if not self.ulica or not self.ulica.strip():
+                raise ValueError("Podaj ulicę lub zaznacz 'brak ulicy'")
+            self.ulica = self.ulica.strip()
+        else:
+            self.ulica = None
+        return self
+
+
+# ======== HELPERY ========
+
 def stworz_token(dane: dict) -> str:
     payload = dane.copy()
     payload["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_WAZNOSC_GODZINY)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-# Endpointy
+
+# ======== ENDPOINTY ========
+
 @app.post("/api/login")
 def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
     zapytanie_sql = text("""
@@ -111,8 +241,8 @@ def rejestracja(request: RejestracjaRequest, db: Session = Depends(get_db)):
     haslo_hash = pwd_context.hash(request.haslo)
 
     wynik = db.execute(text("""
-        INSERT INTO uzytkownicy (email, haslo_hash, rola_id)
-        VALUES (:email, :haslo_hash, :rola_id)
+        INSERT INTO uzytkownicy (email, haslo_hash, rola_id, profil_uzupelniony)
+        VALUES (:email, :haslo_hash, :rola_id, FALSE)
         RETURNING id, email
     """), {
         "email": request.email,
@@ -133,18 +263,6 @@ def rejestracja(request: RejestracjaRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/complete-profile", status_code=200)
 def uzupelnij_kartoteke(request: KartotekaRequest, db: Session = Depends(get_db)):
-    # Walidacja PESEL
-    if not request.pesel.isdigit() or len(request.pesel) != 11:
-        raise HTTPException(status_code=422, detail="PESEL musi składać się z 11 cyfr")
-
-    # Walidacja kodu pocztowego
-    if not re.match(r"^\d{2}-\d{3}$", request.kod_pocztowy):
-        raise HTTPException(status_code=422, detail="Kod pocztowy musi być w formacie XX-XXX")
-
-    # Walidacja ulicy
-    if not request.brak_ulicy and not request.ulica:
-        raise HTTPException(status_code=422, detail="Podaj ulicę lub zaznacz 'brak ulicy'")
-
     # Sprawdź czy PESEL już istnieje
     istniejacy = db.execute(
         text("SELECT id FROM pacjenci WHERE pesel = :pesel"),
@@ -161,7 +279,7 @@ def uzupelnij_kartoteke(request: KartotekaRequest, db: Session = Depends(get_db)
     """), {
         "miejscowosc": request.miejscowosc,
         "kod_pocztowy": request.kod_pocztowy,
-        "ulica": request.ulica if not request.brak_ulicy else None,
+        "ulica": request.ulica,
         "nr_domu": request.nr_domu,
         "nr_lokalu": request.nr_lokalu,
     }).fetchone()
@@ -269,7 +387,6 @@ def dodaj_lekarza(
         raise HTTPException(status_code=409, detail="Email już istnieje")
 
     # Sprawdź czy NPWZ zajęty
-    # Sprawdź czy NPWZ zajęty
     if db.execute(text("SELECT id FROM lekarze WHERE npwz = :npwz"),
               {"npwz": request.npwz}).fetchone():
         raise HTTPException(status_code=409, detail="Lekarz z tym NPWZ już istnieje")
@@ -281,7 +398,7 @@ def dodaj_lekarza(
                   {"pesel": request.pesel}).fetchone():
             raise HTTPException(status_code=409, detail="Lekarz z tym PESELem już istnieje")
 
-# Sprawdź czy placówka istnieje
+    # Sprawdź czy placówka istnieje
     if not db.execute(text("SELECT id FROM placowki WHERE id = :id"),
                       {"id": request.placowka_id}).fetchone():
         raise HTTPException(status_code=404, detail="Placówka nie istnieje")
@@ -305,19 +422,19 @@ def dodaj_lekarza(
 
     # Utwórz profil lekarza
     nowy_lekarz = db.execute(text("""
-    INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
-    VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
-    RETURNING id
-"""), {
-    "uzytkownik_id": nowy_user.id,
-    "placowka_id": request.placowka_id,
-    "imie": request.imie,
-    "nazwisko": request.nazwisko,
-    "pesel": request.pesel if not request.brak_peselu else None,  # ← DODAJ
-    "npwz": request.npwz,
-    "status_npwz": request.status_npwz,
-    "waznosc_oc": request.waznosc_oc,
-}).fetchone()
+        INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
+        VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
+        RETURNING id
+    """), {
+        "uzytkownik_id": nowy_user.id,
+        "placowka_id": request.placowka_id,
+        "imie": request.imie,
+        "nazwisko": request.nazwisko,
+        "pesel": request.pesel if not request.brak_peselu else None,
+        "npwz": request.npwz,
+        "status_npwz": request.status_npwz,
+        "waznosc_oc": request.waznosc_oc,
+    }).fetchone()
 
     # Przypisz specjalizacje
     for spec_id in request.specjalizacje_ids:
