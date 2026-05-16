@@ -7,7 +7,6 @@ import axios from 'axios'
 const router = useRouter()
 const authStore = useAuthStore()
 
-// Zmienne formularza 
 const imie = ref('')
 const nazwisko = ref('')
 const pesel = ref('')
@@ -21,34 +20,114 @@ const brak_ulicy = ref(false)
 
 const blad = ref('')
 const ladowanie = ref(false)
+const bledy = ref<Record<string, string>>({})
 
-// UX: Jeśli ktoś zaznaczy "brak ulicy", czyścimy pole ulicy
 watch(brak_ulicy, (nowaWartosc) => {
-  if (nowaWartosc) {
-    ulica.value = ''
+  if (nowaWartosc) ulica.value = ''
+})
+
+// Auto-formatowanie kodu pocztowego: 12345 → 12-345
+watch(kod_pocztowy, (val) => {
+  const cyfry = val.replace(/\D/g, '').slice(0, 5)
+  if (cyfry.length > 2) {
+    kod_pocztowy.value = `${cyfry.slice(0, 2)}-${cyfry.slice(2)}`
+  } else {
+    kod_pocztowy.value = cyfry
   }
 })
 
+// Auto-formatowanie PESEL — tylko cyfry, max 11
+watch(pesel, (val) => {
+  pesel.value = val.replace(/\D/g, '').slice(0, 11)
+})
+
+// Auto-formatowanie telefonu — tylko cyfry/+, max 13 znaków
+watch(telefon, (val) => {
+  // Dozwolone: opcjonalne +48 na początku, potem 9 cyfr
+  const cleaned = val.replace(/[^\d+]/g, '')
+  telefon.value = cleaned.slice(0, 13)
+})
+
+const walidujPesel = (p: string): boolean => {
+  if (!/^\d{11}$/.test(p)) return false
+  const wagi = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3]
+  
+  //p.charAt(i)
+  const suma = wagi.reduce((acc, w, i) => acc + w * parseInt(p.charAt(i), 10), 0)
+  
+  const kontrolna = (10 - (suma % 10)) % 10
+  
+  //p.charAt(10)
+  return kontrolna === parseInt(p.charAt(10), 10)
+}
+
+const walidujTelefon = (t: string): boolean => {
+  // Akceptuje: 9 cyfr LUB +48 + 9 cyfr
+  return /^(\+48)?\d{9}$/.test(t.replace(/\s/g, ''))
+}
+
+const waliduj = (): boolean => {
+  bledy.value = {}
+
+  if (!imie.value.trim()) {
+    bledy.value.imie = 'Imię jest wymagane'
+  } else if (imie.value.trim().length < 2) {
+    bledy.value.imie = 'Imię musi mieć co najmniej 2 znaki'
+  } else if (!/^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s-]+$/.test(imie.value)) {
+    bledy.value.imie = 'Imię może zawierać tylko litery'
+  }
+
+  if (!nazwisko.value.trim()) {
+    bledy.value.nazwisko = 'Nazwisko jest wymagane'
+  } else if (nazwisko.value.trim().length < 2) {
+    bledy.value.nazwisko = 'Nazwisko musi mieć co najmniej 2 znaki'
+  } else if (!/^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s-]+$/.test(nazwisko.value)) {
+    bledy.value.nazwisko = 'Nazwisko może zawierać tylko litery'
+  }
+
+  if (!pesel.value) {
+    bledy.value.pesel = 'PESEL jest wymagany'
+  } else if (pesel.value.length !== 11) {
+    bledy.value.pesel = 'PESEL musi mieć dokładnie 11 cyfr'
+  } else if (!walidujPesel(pesel.value)) {
+    bledy.value.pesel = 'Podany PESEL jest nieprawidłowy (błędna cyfra kontrolna)'
+  }
+
+  if (!telefon.value) {
+    bledy.value.telefon = 'Numer telefonu jest wymagany'
+  } else if (!walidujTelefon(telefon.value)) {
+    bledy.value.telefon = 'Podaj 9 cyfr lub numer z +48 (np. 123456789 lub +48123456789)'
+  }
+
+  if (!miejscowosc.value.trim()) {
+    bledy.value.miejscowosc = 'Miejscowość jest wymagana'
+  } else if (miejscowosc.value.trim().length < 2) {
+    bledy.value.miejscowosc = 'Podaj prawidłową miejscowość'
+  }
+
+  if (!kod_pocztowy.value) {
+    bledy.value.kod_pocztowy = 'Kod pocztowy jest wymagany'
+  } else if (!/^\d{2}-\d{3}$/.test(kod_pocztowy.value)) {
+    bledy.value.kod_pocztowy = 'Format: XX-XXX (np. 34-600)'
+  }
+
+  if (!brak_ulicy.value && !ulica.value.trim()) {
+    bledy.value.ulica = 'Podaj ulicę lub zaznacz "Brak nazwy ulicy"'
+  }
+
+  if (!nr_domu.value.trim()) {
+    bledy.value.nr_domu = 'Numer domu jest wymagany'
+  } else if (!/^[a-zA-Z0-9\-\/]+$/.test(nr_domu.value)) {
+    bledy.value.nr_domu = 'Nieprawidłowy numer domu'
+  }
+
+  return Object.keys(bledy.value).length === 0
+}
+
 const handleSaveProfile = async () => {
   blad.value = ''
-
-  if (!imie.value || !nazwisko.value || !pesel.value || !telefon.value || !miejscowosc.value || !kod_pocztowy.value || !nr_domu.value) {
-    blad.value = 'Wypełnij wszystkie pola oznaczone gwiazdką (*)!'
-    return
-  }
-
-  if (pesel.value.length !== 11) {
-    blad.value = 'PESEL musi mieć dokładnie 11 cyfr.'
-    return
-  }
-
-  if (!/^\d{2}-\d{3}$/.test(kod_pocztowy.value)) {
-    blad.value = 'Kod pocztowy musi być w formacie XX-XXX (np. 00-001).'
-    return
-  }
-
-  if (!brak_ulicy.value && !ulica.value) {
-    blad.value = 'Podaj ulicę lub zaznacz "Brak nazwy ulicy".'
+  if (!waliduj()) {
+    blad.value = 'Popraw błędy w formularzu przed zapisaniem.'
     return
   }
 
@@ -56,32 +135,29 @@ const handleSaveProfile = async () => {
 
   try {
     const payload = {
-      uzytkownik_id: authStore.user?.id,  // ← id z Pinia store
-      imie: imie.value,
-      nazwisko: nazwisko.value,
+      uzytkownik_id: authStore.user?.id,
+      imie: imie.value.trim(),
+      nazwisko: nazwisko.value.trim(),
       pesel: pesel.value,
-      telefon: telefon.value,
-      miejscowosc: miejscowosc.value,
+      telefon: telefon.value.replace(/\s/g, ''),
+      miejscowosc: miejscowosc.value.trim(),
       kod_pocztowy: kod_pocztowy.value,
-      ulica: brak_ulicy.value ? null : ulica.value,
-      nr_domu: nr_domu.value,
-      nr_lokalu: nr_lokalu.value === '' ? null : nr_lokalu.value,
-      brak_ulicy: brak_ulicy.value
+      ulica: brak_ulicy.value ? null : ulica.value.trim(),
+      nr_domu: nr_domu.value.trim(),
+      nr_lokalu: nr_lokalu.value.trim() === '' ? null : nr_lokalu.value.trim(),
+      brak_ulicy: brak_ulicy.value,
     }
 
     await axios.post('/api/complete-profile', payload)
 
-    // Zaktualizuj store — profil uzupełniony
     if (authStore.user) {
-      authStore.user.imie = imie.value           // imie 
-      authStore.user.nazwisko = nazwisko.value   // nazwisko
+      authStore.user.imie = imie.value.trim()
+      authStore.user.nazwisko = nazwisko.value.trim()
       authStore.user.profil_uzupelniony = true
-
-      localStorage.setItem('user_data', JSON.stringify(authStore.user)) //aktualizacja danych uzytkownika w localstorage
+      localStorage.setItem('user_data', JSON.stringify(authStore.user))
     }
 
     router.push('/')
-
   } catch (error: any) {
     if (error.response?.status === 409) {
       blad.value = 'Pacjent z tym numerem PESEL już istnieje.'
@@ -105,39 +181,47 @@ const handleSaveProfile = async () => {
         <p>Założenie kartoteki wymaga podania szczegółowych danych pacjenta.</p>
       </div>
 
-      <div v-if="blad" class="error-box">
-        {{ blad }}
-      </div>
+      <div v-if="blad" class="error-box">{{ blad }}</div>
 
       <div class="form-grid">
         <div class="section-title full-width">Dane osobowe</div>
-        
+
         <div class="form-group">
           <label>Imię *</label>
-          <input v-model="imie" type="text" placeholder="Jan" />
+          <input v-model="imie" type="text" placeholder="Jan" :class="{ 'input-error': bledy.imie }" />
+          <span v-if="bledy.imie" class="field-error">{{ bledy.imie }}</span>
         </div>
+
         <div class="form-group">
           <label>Nazwisko *</label>
-          <input v-model="nazwisko" type="text" placeholder="Kowalski" />
+          <input v-model="nazwisko" type="text" placeholder="Kowalski" :class="{ 'input-error': bledy.nazwisko }" />
+          <span v-if="bledy.nazwisko" class="field-error">{{ bledy.nazwisko }}</span>
         </div>
+
         <div class="form-group">
           <label>Numer PESEL *</label>
-          <input v-model="pesel" type="text" maxlength="11" placeholder="11 cyfr" />
+          <input v-model="pesel" type="text" maxlength="11" placeholder="11 cyfr" :class="{ 'input-error': bledy.pesel }" />
+          <span v-if="bledy.pesel" class="field-error">{{ bledy.pesel }}</span>
         </div>
+
         <div class="form-group">
           <label>Numer telefonu *</label>
-          <input v-model="telefon" type="tel" placeholder="np. 123456789" />
+          <input v-model="telefon" type="tel" placeholder="123456789 lub +48123456789" :class="{ 'input-error': bledy.telefon }" />
+          <span v-if="bledy.telefon" class="field-error">{{ bledy.telefon }}</span>
         </div>
 
         <div class="section-title full-width">Adres zamieszkania</div>
 
         <div class="form-group">
           <label>Miejscowość *</label>
-          <input v-model="miejscowosc" type="text" placeholder="Warszawa" />
+          <input v-model="miejscowosc" type="text" placeholder="Warszawa" :class="{ 'input-error': bledy.miejscowosc }" />
+          <span v-if="bledy.miejscowosc" class="field-error">{{ bledy.miejscowosc }}</span>
         </div>
+
         <div class="form-group">
           <label>Kod pocztowy *</label>
-          <input v-model="kod_pocztowy" type="text" placeholder="00-000" />
+          <input v-model="kod_pocztowy" type="text" placeholder="00-000" maxlength="6" :class="{ 'input-error': bledy.kod_pocztowy }" />
+          <span v-if="bledy.kod_pocztowy" class="field-error">{{ bledy.kod_pocztowy }}</span>
         </div>
 
         <div class="form-group full-width checkbox-container">
@@ -146,14 +230,17 @@ const handleSaveProfile = async () => {
         </div>
 
         <div class="form-group full-width" v-if="!brak_ulicy">
-          <label>Ulica</label>
-          <input v-model="ulica" type="text" placeholder="Wiosenna" />
+          <label>Ulica *</label>
+          <input v-model="ulica" type="text" placeholder="Wiosenna" :class="{ 'input-error': bledy.ulica }" />
+          <span v-if="bledy.ulica" class="field-error">{{ bledy.ulica }}</span>
         </div>
 
         <div class="form-group">
           <label>Numer domu *</label>
-          <input v-model="nr_domu" type="text" placeholder="12" @keyup.enter="handleSaveProfile" />
+          <input v-model="nr_domu" type="text" placeholder="12A" :class="{ 'input-error': bledy.nr_domu }" />
+          <span v-if="bledy.nr_domu" class="field-error">{{ bledy.nr_domu }}</span>
         </div>
+
         <div class="form-group">
           <label>Numer lokalu</label>
           <input v-model="nr_lokalu" type="text" placeholder="4 (opcjonalnie)" @keyup.enter="handleSaveProfile" />
@@ -186,23 +273,9 @@ const handleSaveProfile = async () => {
   max-width: 650px;
 }
 
-.header {
-  text-align: center;
-  margin-bottom: 25px;
-}
-
-.header h2 {
-  margin: 0 0 10px 0;
-  font-size: 26px;
-  color: #1e293b;
-}
-
-.header p {
-  color: #64748b;
-  font-size: 15px;
-  line-height: 1.5;
-  margin: 0;
-}
+.header { text-align: center; margin-bottom: 25px; }
+.header h2 { margin: 0 0 10px 0; font-size: 26px; color: #1e293b; }
+.header p { color: #64748b; font-size: 15px; line-height: 1.5; margin: 0; }
 
 .text-blue { color: #0056b3; font-weight: bold; }
 .text-green { color: #28a745; font-weight: bold; }
@@ -224,9 +297,7 @@ const handleSaveProfile = async () => {
   margin-bottom: 30px;
 }
 
-.full-width {
-  grid-column: span 2;
-}
+.full-width { grid-column: span 2; }
 
 .section-title {
   font-size: 16px;
@@ -237,9 +308,7 @@ const handleSaveProfile = async () => {
   border-bottom: 1px solid #e2e8f0;
 }
 
-.form-group {
-  text-align: left;
-}
+.form-group { text-align: left; }
 
 .form-group label {
   display: block;
@@ -267,6 +336,15 @@ const handleSaveProfile = async () => {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
+.input-error { border-color: #ef4444 !important; }
+
+.field-error {
+  display: block;
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .checkbox-container {
   display: flex;
   align-items: center;
@@ -274,10 +352,7 @@ const handleSaveProfile = async () => {
   margin-top: 5px;
 }
 
-.checkbox-label {
-  margin-bottom: 0 !important;
-  cursor: pointer;
-}
+.checkbox-label { margin-bottom: 0 !important; cursor: pointer; }
 
 .btn-primary {
   width: 100%;
@@ -292,21 +367,11 @@ const handleSaveProfile = async () => {
   transition: 0.2s;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background-color: #2563eb;
-}
-
-.btn-primary:disabled {
-  background-color: #93c5fd;
-  cursor: not-allowed;
-}
+.btn-primary:hover:not(:disabled) { background-color: #2563eb; }
+.btn-primary:disabled { background-color: #93c5fd; cursor: not-allowed; }
 
 @media (max-width: 600px) {
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-  .full-width {
-    grid-column: span 1;
-  }
+  .form-grid { grid-template-columns: 1fr; }
+  .full-width { grid-column: span 1; }
 }
 </style>

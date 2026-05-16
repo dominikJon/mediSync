@@ -9,16 +9,31 @@ const authStore = useAuthStore()
 const username = ref('')
 const password = ref('')
 const errorMessage = ref('')
+const bledy = ref<{ email?: string; haslo?: string }>({})
+
+const waliduj = () => {
+  bledy.value = {}
+  if (!username.value) {
+    bledy.value.email = 'Podaj adres email'
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.value)) {
+    bledy.value.email = 'Podaj poprawny adres email'
+  }
+  if (!password.value) {
+    bledy.value.haslo = 'Podaj hasło'
+  }
+  return Object.keys(bledy.value).length === 0
+}
 
 const handleLogin = async () => {
-  errorMessage.value = '' 
-  
+  errorMessage.value = ''
+  if (!waliduj()) return
+
   const success = await authStore.login(username.value, password.value)
-  
+
   if (success) {
     router.push('/')
   } else {
-    errorMessage.value = 'Nieprawidłowy login lub błąd serwera!'
+    errorMessage.value = 'Nieprawidłowy email lub hasło.'
   }
 }
 </script>
@@ -29,21 +44,34 @@ const handleLogin = async () => {
       <h2><span class="text-blue">Medi</span><span class="text-green">Sync</span></h2>
     </div>
     <h3 class="auth-title">Zaloguj się</h3>
-    
+
+    <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
+
     <div class="form-group">
-      <label>Login lub Email</label>
-      <input v-model="username" type="text" placeholder="Wpisz login" />
+      <label>Email</label>
+      <input
+        v-model="username"
+        type="email"
+        placeholder="jan.kowalski@email.pl"
+        :class="{ 'input-error': bledy.email }"
+      />
+      <span v-if="bledy.email" class="field-error">{{ bledy.email }}</span>
     </div>
-    
+
     <div class="form-group">
       <label>Hasło</label>
-      <input v-model="password" type="password" placeholder="Wpisz hasło" @keyup.enter="handleLogin" />
+      <input
+        v-model="password"
+        type="password"
+        placeholder="Wpisz hasło"
+        :class="{ 'input-error': bledy.haslo }"
+        @keyup.enter="handleLogin"
+      />
+      <span v-if="bledy.haslo" class="field-error">{{ bledy.haslo }}</span>
     </div>
-    
-    <p v-if="errorMessage" class="error-msg">{{ errorMessage }}</p>
 
     <button @click="handleLogin" class="btn-primary">Zaloguj</button>
-    
+
     <p class="auth-footer">
       Nie masz konta? <RouterLink to="/register">Zarejestruj się</RouterLink>
     </p>
@@ -51,7 +79,6 @@ const handleLogin = async () => {
 </template>
 
 <style scoped>
-
 .auth-card {
   background: white;
   padding: 40px;
@@ -62,24 +89,20 @@ const handleLogin = async () => {
   text-align: center;
 }
 
-.logo h2 {
-  margin: 0 0 24px 0;
-  font-size: 28px;
-}
+.logo h2 { margin: 0 0 24px 0; font-size: 28px; }
+.text-blue { color: #0056b3; font-weight: bold; }
+.text-green { color: #28a745; font-weight: bold; }
 
-.text-blue {
-  color: #0056b3;
-  font-weight: bold;
-}
+.auth-title { margin-bottom: 24px; color: #1e293b; }
 
-.text-green {
-  color: #28a745;
-  font-weight: bold;
-}
-
-.auth-title {
-  margin-bottom: 24px;
-  color: #1e293b;
+.error-box {
+  background: #fee2e2;
+  color: #dc2626;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  text-align: left;
 }
 
 .form-group {
@@ -102,18 +125,22 @@ const handleLogin = async () => {
   border-radius: 8px;
   box-sizing: border-box;
   font-size: 15px;
+  transition: border-color 0.2s;
 }
 
 .form-group input:focus {
   outline: none;
   border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-.error-msg {
+.input-error { border-color: #ef4444 !important; }
+
+.field-error {
+  display: block;
   color: #ef4444;
-  font-size: 14px;
-  margin-bottom: 16px;
-  font-weight: 600;
+  font-size: 12px;
+  margin-top: 4px;
 }
 
 .btn-primary {
@@ -130,20 +157,8 @@ const handleLogin = async () => {
   margin-top: 10px;
 }
 
-.btn-primary:hover {
-  background-color: #2563eb;
-}
+.btn-primary:hover { background-color: #2563eb; }
 
-.auth-footer {
-  margin-top: 24px;
-  font-size: 14px;
-  color: #64748b;
-}
-
-.auth-footer a {
-  color: #3b82f6;
-  text-decoration: none;
-  font-weight: 600;
-}
-
+.auth-footer { margin-top: 24px; font-size: 14px; color: #64748b; }
+.auth-footer a { color: #3b82f6; text-decoration: none; font-weight: 600; }
 </style>
