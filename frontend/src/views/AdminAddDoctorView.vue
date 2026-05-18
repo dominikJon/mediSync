@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, watch, onMounted } from 'vue'
 import axios from 'axios'
 
-const router = useRouter()
 
 const email = ref('')
 const haslo = ref('')
@@ -24,6 +22,26 @@ const ladowanie = ref(false)
 
 const pesel = ref('')
 const brak_peselu = ref(false)
+
+const bledy = ref<Record<string, string>>({})
+
+// Auto-formatowanie PESEL — tylko cyfry, max 11
+watch(pesel, (val) => {
+  pesel.value = val.replace(/\D/g, '').slice(0, 11)
+})
+
+// Auto-formatowanie NPWZ — tylko cyfry, max 7
+watch(npwz, (val) => {
+  npwz.value = val.replace(/\D/g, '').slice(0, 7)
+})
+
+// Gdy zaznaczy się "brak PESEL" — wyczyść pole i błąd
+watch(brak_peselu, (val) => {
+  if (val) {
+    pesel.value = ''
+    delete bledy.value.pesel
+  }
+})
 
 const pobierzDane = async () => {
   try {
@@ -47,40 +65,128 @@ const toggleSpecjalizacja = (id: number) => {
   }
 }
 
+const walidujPesel = (p: string): boolean => {
+  if (!/^\d{11}$/.test(p)) return false
+  const wagi = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3]
+  const suma = wagi.reduce((acc, w, i) => acc + w * parseInt(p.charAt(i), 10), 0)
+  const kontrolna = (10 - (suma % 10)) % 10
+  return kontrolna === parseInt(p.charAt(10), 10)
+}
+
+const walidujEmail = (e: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)
+}
+
+// Zwraca null jak OK, albo komunikat błędu
+const walidujHaslo = (h: string): string | null => {
+  if (!h) return 'Hasło jest wymagane'
+  if (h.length < 12) return 'Hasło musi mieć co najmniej 12 znaków'
+  if (!/[A-Z]/.test(h)) return 'Hasło musi zawierać wielką literę'
+  if (!/[a-z]/.test(h)) return 'Hasło musi zawierać małą literę'
+  if (!/\d/.test(h)) return 'Hasło musi zawierać cyfrę'
+  if (!/[!@#$%^&*(),.?":{}|<>_\-]/.test(h)) return 'Hasło musi zawierać znak specjalny'
+  return null
+}
+
+const waliduj = (): boolean => {
+  bledy.value = {}
+
+  // Email
+  if (!email.value.trim()) {
+    bledy.value.email = 'Email jest wymagany'
+  } else if (!walidujEmail(email.value.trim())) {
+    bledy.value.email = 'Nieprawidłowy format adresu email'
+  }
+
+  // Hasło
+  const bladHasla = walidujHaslo(haslo.value)
+  if (bladHasla) {
+    bledy.value.haslo = bladHasla
+  }
+
+  // Imię
+  if (!imie.value.trim()) {
+    bledy.value.imie = 'Imię jest wymagane'
+  } else if (imie.value.trim().length < 2) {
+    bledy.value.imie = 'Imię musi mieć co najmniej 2 znaki'
+  } else if (!/^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s-]+$/.test(imie.value)) {
+    bledy.value.imie = 'Imię może zawierać tylko litery'
+  }
+
+  // Nazwisko
+  if (!nazwisko.value.trim()) {
+    bledy.value.nazwisko = 'Nazwisko jest wymagane'
+  } else if (nazwisko.value.trim().length < 2) {
+    bledy.value.nazwisko = 'Nazwisko musi mieć co najmniej 2 znaki'
+  } else if (!/^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s-]+$/.test(nazwisko.value)) {
+    bledy.value.nazwisko = 'Nazwisko może zawierać tylko litery'
+  }
+
+  // PESEL — TYLKO gdy nie zaznaczono "brak_peselu"
+  if (!brak_peselu.value) {
+    if (!pesel.value) {
+      bledy.value.pesel = 'PESEL jest wymagany (lub zaznacz "lekarz zagraniczny")'
+    } else if (pesel.value.length !== 11) {
+      bledy.value.pesel = 'PESEL musi mieć dokładnie 11 cyfr'
+    } else if (!walidujPesel(pesel.value)) {
+      bledy.value.pesel = 'Nieprawidłowy PESEL — błędna cyfra kontrolna'
+    }
+  }
+
+  // NPWZ — długość + regex
+  if (!npwz.value) {
+    bledy.value.npwz = 'NPWZ jest wymagany'
+  } else if (!/^\d{7}$/.test(npwz.value)) {
+    bledy.value.npwz = 'NPWZ musi składać się z dokładnie 7 cyfr'
+  }
+
+  // Status NPWZ — zabezpieczenie przed manipulacją DOM
+  if (!['aktywny', 'zawieszony', 'wygasły'].includes(status_npwz.value)) {
+    bledy.value.status_npwz = 'Nieprawidłowy status NPWZ'
+  }
+
+  // Ważność OC — wymagana i w przyszłości
+  if (!waznosc_oc.value) {
+    bledy.value.waznosc_oc = 'Data ważności OC jest wymagana'
+  } else {
+    const dataOc = new Date(waznosc_oc.value)
+    const dzis = new Date()
+    dzis.setHours(0, 0, 0, 0)
+    if (dataOc <= dzis) {
+      bledy.value.waznosc_oc = 'Data ważności OC musi być w przyszłości'
+    }
+  }
+
+  // Placówka — wybrana
+  if (!placowka_id.value) {
+    bledy.value.placowka_id = 'Wybierz placówkę'
+  }
+
+  // Specjalizacje — min. 1
+  if (wybrane_specjalizacje.value.length === 0) {
+    bledy.value.specjalizacje = 'Wybierz co najmniej jedną specjalizację'
+  }
+
+  return Object.keys(bledy.value).length === 0
+}
+
 const handleSubmit = async () => {
   blad.value = ''
   sukces.value = ''
 
-  if (!email.value || !haslo.value || !imie.value || !nazwisko.value || !npwz.value || !waznosc_oc.value || !placowka_id.value) {
-    blad.value = 'Wypełnij wszystkie wymagane pola.'
+  if (!waliduj()) {
+    blad.value = 'Popraw błędy w formularzu przed zapisaniem.'
     return
   }
-
-  if (npwz.value.length !== 7) {
-    blad.value = 'NPWZ musi mieć dokładnie 7 znaków.'
-    return
-  }
-
-  if (wybrane_specjalizacje.value.length === 0) {
-    blad.value = 'Wybierz co najmniej jedną specjalizację.'
-    return
-  }
-
-  if (!brak_peselu.value) {
-  if (!pesel.value || pesel.value.length !== 11 || !/^\d+$/.test(pesel.value)) {
-    blad.value = 'PESEL musi składać się z 11 cyfr.'
-    return
-  }
-}
 
   ladowanie.value = true
 
   try {
     await axios.post('/api/admin/add-doctor', {
-      email: email.value,
+      email: email.value.trim().toLowerCase(),
       haslo: haslo.value,
-      imie: imie.value,
-      nazwisko: nazwisko.value,
+      imie: imie.value.trim(),
+      nazwisko: nazwisko.value.trim(),
       pesel: brak_peselu.value ? null : pesel.value,
       brak_peselu: brak_peselu.value,
       npwz: npwz.value,
@@ -99,15 +205,25 @@ const handleSubmit = async () => {
     pesel.value = ''
     brak_peselu.value = false
     npwz.value = ''
+    status_npwz.value = 'aktywny'
     waznosc_oc.value = ''
     placowka_id.value = null
     wybrane_specjalizacje.value = []
+    bledy.value = {}
 
   } catch (error: any) {
     if (error.response?.status === 409) {
       blad.value = error.response.data.detail
     } else if (error.response?.status === 403) {
       blad.value = 'Brak uprawnień.'
+    } else if (error.response?.status === 422) {
+      // Błąd walidacji z backendu (Pydantic)
+      const detail = error.response.data.detail
+      if (Array.isArray(detail) && detail.length > 0) {
+        blad.value = detail[0].msg || 'Błąd walidacji danych'
+      } else {
+        blad.value = typeof detail === 'string' ? detail : 'Błąd walidacji danych'
+      }
     } else {
       blad.value = 'Wystąpił błąd serwera.'
     }
@@ -135,22 +251,48 @@ onMounted(pobierzDane)
 
         <div class="form-group">
           <label>Email *</label>
-          <input v-model="email" type="email" placeholder="lekarz@medisync.pl" />
+          <input
+            v-model="email"
+            type="email"
+            placeholder="lekarz@medisync.pl"
+            :class="{ 'input-error': bledy.email }"
+          />
+          <span v-if="bledy.email" class="field-error">{{ bledy.email }}</span>
         </div>
+
         <div class="form-group">
           <label>Hasło *</label>
-          <input v-model="haslo" type="password" placeholder="Min. 8 znaków" />
+          <input
+            v-model="haslo"
+            type="password"
+            placeholder="Min. 12 znaków"
+            :class="{ 'input-error': bledy.haslo }"
+          />
+          <span v-if="bledy.haslo" class="field-error">{{ bledy.haslo }}</span>
         </div>
 
         <div class="section-title full">Dane osobowe</div>
 
         <div class="form-group">
           <label>Imię *</label>
-          <input v-model="imie" type="text" placeholder="Jan" />
+          <input
+            v-model="imie"
+            type="text"
+            placeholder="Jan"
+            :class="{ 'input-error': bledy.imie }"
+          />
+          <span v-if="bledy.imie" class="field-error">{{ bledy.imie }}</span>
         </div>
+
         <div class="form-group">
           <label>Nazwisko *</label>
-          <input v-model="nazwisko" type="text" placeholder="Kowalski" />
+          <input
+            v-model="nazwisko"
+            type="text"
+            placeholder="Kowalski"
+            :class="{ 'input-error': bledy.nazwisko }"
+          />
+          <span v-if="bledy.nazwisko" class="field-error">{{ bledy.nazwisko }}</span>
         </div>
 
         <div class="form-group full">
@@ -161,8 +303,9 @@ onMounted(pobierzDane)
             maxlength="11"
             placeholder="12345678901"
             :disabled="brak_peselu"
-            :class="{ 'input-disabled': brak_peselu }"
+            :class="{ 'input-disabled': brak_peselu, 'input-error': bledy.pesel }"
           />
+          <span v-if="bledy.pesel" class="field-error">{{ bledy.pesel }}</span>
           <label class="checkbox-label">
             <input type="checkbox" v-model="brak_peselu" />
              Lekarz zagraniczny — brak numeru PESEL
@@ -172,29 +315,46 @@ onMounted(pobierzDane)
         <div class="section-title full">Dane zawodowe</div>
 
         <div class="form-group">
-          <label>NPWZ * <span class="hint">(7 znaków)</span></label>
-          <input v-model="npwz" type="text" maxlength="7" placeholder="1234567" />
+          <label>NPWZ * <span class="hint">(7 cyfr)</span></label>
+          <input
+            v-model="npwz"
+            type="text"
+            maxlength="7"
+            placeholder="1234567"
+            :class="{ 'input-error': bledy.npwz }"
+          />
+          <span v-if="bledy.npwz" class="field-error">{{ bledy.npwz }}</span>
         </div>
+
         <div class="form-group">
           <label>Status NPWZ *</label>
-          <select v-model="status_npwz">
+          <select v-model="status_npwz" :class="{ 'input-error': bledy.status_npwz }">
             <option value="aktywny">Aktywny</option>
             <option value="zawieszony">Zawieszony</option>
             <option value="wygasły">Wygasły</option>
           </select>
+          <span v-if="bledy.status_npwz" class="field-error">{{ bledy.status_npwz }}</span>
         </div>
+
         <div class="form-group">
           <label>Ważność OC *</label>
-          <input v-model="waznosc_oc" type="date" />
+          <input
+            v-model="waznosc_oc"
+            type="date"
+            :class="{ 'input-error': bledy.waznosc_oc }"
+          />
+          <span v-if="bledy.waznosc_oc" class="field-error">{{ bledy.waznosc_oc }}</span>
         </div>
+
         <div class="form-group">
           <label>Placówka *</label>
-          <select v-model="placowka_id">
+          <select v-model="placowka_id" :class="{ 'input-error': bledy.placowka_id }">
             <option :value="null" disabled>Wybierz placówkę</option>
             <option v-for="p in placowki" :key="p.id" :value="p.id">
               {{ p.nazwa }}
             </option>
           </select>
+          <span v-if="bledy.placowka_id" class="field-error">{{ bledy.placowka_id }}</span>
         </div>
 
         <div class="section-title full">Specjalizacje *</div>
@@ -212,6 +372,7 @@ onMounted(pobierzDane)
             Brak specjalizacji w bazie. Dodaj je najpierw przez SQL.
           </div>
         </div>
+        <span v-if="bledy.specjalizacje" class="field-error full">{{ bledy.specjalizacje }}</span>
       </div>
 
       <button @click="handleSubmit" class="btn-primary" :disabled="ladowanie">
@@ -323,6 +484,17 @@ onMounted(pobierzDane)
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+}
+
+.input-error {
+  border-color: #ef4444 !important;
+}
+
+.field-error {
+  display: block;
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
 }
 
 .specjalizacje-grid {

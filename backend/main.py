@@ -1,12 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from passlib.context import CryptContext
 from jose import jwt
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, timezone, date
+from typing import Optional, Literal
 import os
 import re
 from database import get_db
@@ -180,12 +180,114 @@ class KartotekaRequest(BaseModel):
         return self
 
 
+# Modele admina
+class DodajLekarzaRequest(BaseModel):
+    email: str
+    haslo: str
+    imie: str
+    nazwisko: str
+    pesel: Optional[str] = None
+    brak_peselu: bool = False
+    npwz: str
+    status_npwz: Literal["aktywny", "zawieszony", "wygasły"]
+    waznosc_oc: date
+    placowka_id: int = Field(gt=0)
+    specjalizacje_ids: list[int] = Field(min_length=1)
+
+    @field_validator("email")
+    @classmethod
+    def waliduj_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not REGEX_EMAIL.match(v):
+            raise ValueError("Nieprawidłowy format adresu email")
+        return v
+
+    @field_validator("haslo")
+    @classmethod
+    def waliduj_haslo(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("Hasło musi mieć co najmniej 12 znaków")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną wielką literę")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną małą literę")
+        if not re.search(r"\d", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną cyfrę")
+        if not REGEX_ZNAK_SPECJALNY.search(v):
+            raise ValueError("Hasło musi zawierać co najmniej jeden znak specjalny")
+        return v
+
+    @field_validator("imie", "nazwisko")
+    @classmethod
+    def waliduj_imie_nazwisko(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Musi mieć co najmniej 2 znaki")
+        if not REGEX_LITERY_PL.match(v):
+            raise ValueError("Dozwolone są tylko litery, spacja i myślnik")
+        return v
+
+    @field_validator("npwz")
+    @classmethod
+    def waliduj_npwz(cls, v: str) -> str:
+        v = v.strip()
+        if not re.match(r"^\d{7}$", v):
+            raise ValueError("NPWZ musi składać się z dokładnie 7 cyfr")
+        return v
+
+    @field_validator("waznosc_oc")
+    @classmethod
+    def waliduj_waznosc_oc(cls, v: date) -> date:
+        if v <= date.today():
+            raise ValueError("Data ważności OC musi być w przyszłości")
+        return v
+
+    @model_validator(mode="after")
+    def waliduj_pesel_lub_brak(self):
+        if self.brak_peselu:
+            # Zagraniczny lekarz — ignorujemy PESEL całkowicie
+            self.pesel = None
+            return self
+
+        # Krajowy lekarz — PESEL wymagany i poprawny
+        if not self.pesel or not self.pesel.strip():
+            raise ValueError("PESEL jest wymagany (lub zaznacz 'brak PESEL')")
+
+        pesel_clean = self.pesel.strip()
+        if not re.match(r"^\d{11}$", pesel_clean):
+            raise ValueError("PESEL musi składać się z dokładnie 11 cyfr")
+        if not waliduj_pesel(pesel_clean):
+            raise ValueError("Nieprawidłowy PESEL — błędna cyfra kontrolna")
+
+        self.pesel = pesel_clean
+        return self
+
+
 # ======== HELPERY ========
 
 def stworz_token(dane: dict) -> str:
     payload = dane.copy()
-    payload["exp"] = datetime.utcnow() + timedelta(hours=TOKEN_WAZNOSC_GODZINY)
+    payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=TOKEN_WAZNOSC_GODZINY)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# Helper — weryfikacja roli z tokena
+def weryfikuj_token(authorization: str = None) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Brak tokena autoryzacyjnego")
+    token = authorization.split(" ")[1]
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except Exception:
+        raise HTTPException(status_code=401, detail="Nieprawidłowy token")
+
+
+def tylko_admin(authorization: str = Header(default=None)) -> dict:
+    payload = weryfikuj_token(authorization)
+    if payload.get("rola") != "admin":
+        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola admin")
+    return payload
 
 
 # ======== ENDPOINTY ========
@@ -308,54 +410,26 @@ def uzupelnij_kartoteke(request: KartotekaRequest, db: Session = Depends(get_db)
     return {"status": "sukces"}
 
 
-# Modele admina
-class DodajLekarzaRequest(BaseModel):
-    email: str
-    haslo: str
-    imie: str          
-    nazwisko: str
-    pesel: Optional[str] = None
-    brak_peselu: bool = False
-    npwz: str
-    status_npwz: str
-    waznosc_oc: str  # format YYYY-MM-DD
-    placowka_id: int
-    specjalizacje_ids: list[int]
+# ======== ENDPOINTY ADMINA ========
 
-
-# Helper — weryfikacja roli z tokena
-def weryfikuj_token(authorization: str = None) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Brak tokena autoryzacyjnego")
-    token = authorization.split(" ")[1]
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except Exception:
-        raise HTTPException(status_code=401, detail="Nieprawidłowy token")
-
-
-from fastapi import Header
-
-def tylko_admin(authorization: str = Header(default=None)) -> dict:
-    payload = weryfikuj_token(authorization)
-    if payload.get("rola") != "admin":
-        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola admin")
-    return payload
-
-
-# Endpointy admina
 @app.get("/api/admin/users")
 def lista_uzytkownikow(
     db: Session = Depends(get_db),
     payload: dict = Depends(tylko_admin)
 ):
     wyniki = db.execute(text("""
-        SELECT u.id, u.email, u.profil_uzupelniony, r.nazwa AS rola,
-               p.imie, p.nazwisko, p.pesel
+        SELECT 
+            u.id, 
+            u.email, 
+            u.profil_uzupelniony, 
+            r.nazwa AS rola,
+            COALESCE(p.imie, l.imie) AS imie,
+            COALESCE(p.nazwisko, l.nazwisko) AS nazwisko,
+            COALESCE(p.pesel, l.pesel) AS pesel
         FROM uzytkownicy u
         JOIN role r ON u.rola_id = r.id
         LEFT JOIN pacjenci p ON u.id = p.uzytkownik_id
+        LEFT JOIN lekarze l ON u.id = l.uzytkownik_id
         ORDER BY u.id DESC
     """)).fetchall()
 
@@ -381,78 +455,91 @@ def dodaj_lekarza(
     db: Session = Depends(get_db),
     payload: dict = Depends(tylko_admin)
 ):
-    # Sprawdź czy email zajęty
-    if db.execute(text("SELECT id FROM uzytkownicy WHERE email = :email"),
-                  {"email": request.email}).fetchone():
-        raise HTTPException(status_code=409, detail="Email już istnieje")
+    try:
+        # Sprawdź czy email zajęty
+        if db.execute(text("SELECT id FROM uzytkownicy WHERE email = :email"),
+                      {"email": request.email}).fetchone():
+            raise HTTPException(status_code=409, detail="Email już istnieje")
 
-    # Sprawdź czy NPWZ zajęty
-    if db.execute(text("SELECT id FROM lekarze WHERE npwz = :npwz"),
-              {"npwz": request.npwz}).fetchone():
-        raise HTTPException(status_code=409, detail="Lekarz z tym NPWZ już istnieje")
+        # Sprawdź czy NPWZ zajęty
+        if db.execute(text("SELECT id FROM lekarze WHERE npwz = :npwz"),
+                      {"npwz": request.npwz}).fetchone():
+            raise HTTPException(status_code=409, detail="Lekarz z tym NPWZ już istnieje")
 
-    if not request.brak_peselu:
-        if not request.pesel or not request.pesel.isdigit() or len(request.pesel) != 11:
-            raise HTTPException(status_code=422, detail="PESEL musi składać się z 11 cyfr")
-        if db.execute(text("SELECT id FROM lekarze WHERE pesel = :pesel"),
-                  {"pesel": request.pesel}).fetchone():
-            raise HTTPException(status_code=409, detail="Lekarz z tym PESELem już istnieje")
+        # Sprawdź unikalność PESEL (tylko dla lekarzy z PESELem)
+        if not request.brak_peselu and request.pesel:
+            if db.execute(text("SELECT id FROM lekarze WHERE pesel = :pesel"),
+                          {"pesel": request.pesel}).fetchone():
+                raise HTTPException(status_code=409, detail="Lekarz z tym PESELem już istnieje")
 
-    # Sprawdź czy placówka istnieje
-    if not db.execute(text("SELECT id FROM placowki WHERE id = :id"),
-                      {"id": request.placowka_id}).fetchone():
-        raise HTTPException(status_code=404, detail="Placówka nie istnieje")
+        # Sprawdź czy placówka istnieje
+        if not db.execute(text("SELECT id FROM placowki WHERE id = :id"),
+                          {"id": request.placowka_id}).fetchone():
+            raise HTTPException(status_code=404, detail="Placówka nie istnieje")
 
-    # Pobierz rolę lekarza
-    rola = db.execute(text("SELECT id FROM role WHERE nazwa = 'lekarz'")).fetchone()
-    if not rola:
-        raise HTTPException(status_code=500, detail="Brak roli 'lekarz' w bazie")
+        # Sprawdź czy wszystkie specjalizacje istnieją
+        for spec_id in request.specjalizacje_ids:
+            if not db.execute(text("SELECT id FROM specjalizacje WHERE id = :id"),
+                              {"id": spec_id}).fetchone():
+                raise HTTPException(status_code=404, detail=f"Specjalizacja o id {spec_id} nie istnieje")
 
-    # Utwórz konto użytkownika
-    haslo_hash = pwd_context.hash(request.haslo)
-    nowy_user = db.execute(text("""
-        INSERT INTO uzytkownicy (email, haslo_hash, rola_id, profil_uzupelniony)
-        VALUES (:email, :haslo_hash, :rola_id, TRUE)
-        RETURNING id
-    """), {
-        "email": request.email,
-        "haslo_hash": haslo_hash,
-        "rola_id": rola.id,
-    }).fetchone()
+        # Pobierz rolę lekarza
+        rola = db.execute(text("SELECT id FROM role WHERE nazwa = 'lekarz'")).fetchone()
+        if not rola:
+            raise HTTPException(status_code=500, detail="Brak roli 'lekarz' w bazie")
 
-    # Utwórz profil lekarza
-    nowy_lekarz = db.execute(text("""
-        INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
-        VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
-        RETURNING id
-    """), {
-        "uzytkownik_id": nowy_user.id,
-        "placowka_id": request.placowka_id,
-        "imie": request.imie,
-        "nazwisko": request.nazwisko,
-        "pesel": request.pesel if not request.brak_peselu else None,
-        "npwz": request.npwz,
-        "status_npwz": request.status_npwz,
-        "waznosc_oc": request.waznosc_oc,
-    }).fetchone()
-
-    # Przypisz specjalizacje
-    for spec_id in request.specjalizacje_ids:
-        db.execute(text("""
-            INSERT INTO lekarz_specjalizacja (lekarz_id, specjalizacja_id)
-            VALUES (:lekarz_id, :specjalizacja_id)
+        # Utwórz konto użytkownika
+        haslo_hash = pwd_context.hash(request.haslo)
+        nowy_user = db.execute(text("""
+            INSERT INTO uzytkownicy (email, haslo_hash, rola_id, profil_uzupelniony)
+            VALUES (:email, :haslo_hash, :rola_id, TRUE)
+            RETURNING id
         """), {
+            "email": request.email,
+            "haslo_hash": haslo_hash,
+            "rola_id": rola.id,
+        }).fetchone()
+
+        # Utwórz profil lekarza
+        nowy_lekarz = db.execute(text("""
+            INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
+            VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
+            RETURNING id
+        """), {
+            "uzytkownik_id": nowy_user.id,
+            "placowka_id": request.placowka_id,
+            "imie": request.imie,
+            "nazwisko": request.nazwisko,
+            "pesel": request.pesel,
+            "npwz": request.npwz,
+            "status_npwz": request.status_npwz,
+            "waznosc_oc": request.waznosc_oc,
+        }).fetchone()
+
+        # Przypisz specjalizacje
+        for spec_id in request.specjalizacje_ids:
+            db.execute(text("""
+                INSERT INTO lekarz_specjalizacja (lekarz_id, specjalizacja_id)
+                VALUES (:lekarz_id, :specjalizacja_id)
+            """), {
+                "lekarz_id": nowy_lekarz.id,
+                "specjalizacja_id": spec_id,
+            })
+
+        db.commit()
+
+        return {
+            "status": "sukces",
             "lekarz_id": nowy_lekarz.id,
-            "specjalizacja_id": spec_id,
-        })
+            "uzytkownik_id": nowy_user.id,
+        }
 
-    db.commit()
-
-    return {
-        "status": "sukces",
-        "lekarz_id": nowy_lekarz.id,
-        "uzytkownik_id": nowy_user.id,
-    }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas dodawania lekarza: {str(e)}")
 
 
 @app.get("/api/admin/placowki")
