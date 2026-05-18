@@ -63,7 +63,7 @@ const walidujPesel = (p: string): boolean => {
 
 const walidujTelefon = (t: string): boolean => {
   // Akceptuje: 9 cyfr LUB +48 + 9 cyfr
-  return /^(\+48)?\d{9}$/.test(t.replace(/\s/g, ''))
+  return /^(\+48)?\d{9}$/.test(t)
 }
 
 const waliduj = (): boolean => {
@@ -166,7 +166,6 @@ const handleSaveProfile = async () => {
     } else {
       blad.value = 'Wystąpił błąd podczas zapisywania danych.'
     }
-    console.error(error)
   } finally {
     ladowanie.value = false
   }

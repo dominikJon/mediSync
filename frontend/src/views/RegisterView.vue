@@ -137,7 +137,7 @@ const handleRegister = async () => {
         <li :class="{ spelnione: /[A-Z]/.test(password) }">✓ Wielką literę (A-Z)</li>
         <li :class="{ spelnione: /[a-z]/.test(password) }">✓ Małą literę (a-z)</li>
         <li :class="{ spelnione: /\d/.test(password) }">✓ Cyfrę (0-9)</li>
-        <li :class="{ spelnione: /[!@#$%^&*(),.?&quot;:{}|<>_\-]/.test(password) }">✓ Znak specjalny (!@#$...)</li>
+        <li :class="{ spelnione: /[!@#$%^&*(),.?&#34;:{}|<>_\-]/.test(password) }">✓ Znak specjalny (!@#$...)</li>
       </ul>
     </div>
 

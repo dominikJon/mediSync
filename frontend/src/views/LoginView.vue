@@ -6,16 +6,17 @@ import { useAuthStore } from '../stores/auth'
 const router = useRouter()
 const authStore = useAuthStore()
 
-const username = ref('')
+const email = ref('')
 const password = ref('')
-const errorMessage = ref('')
+const blad = ref('')
+const ladowanie = ref(false)
 const bledy = ref<{ email?: string; haslo?: string }>({})
 
 const waliduj = () => {
   bledy.value = {}
-  if (!username.value) {
+  if (!email.value) {
     bledy.value.email = 'Podaj adres email'
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.value)) {
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
     bledy.value.email = 'Podaj poprawny adres email'
   }
   if (!password.value) {
@@ -25,15 +26,20 @@ const waliduj = () => {
 }
 
 const handleLogin = async () => {
-  errorMessage.value = ''
+  blad.value = ''
   if (!waliduj()) return
 
-  const success = await authStore.login(username.value, password.value)
+  ladowanie.value = true
 
-  if (success) {
-    router.push('/')
-  } else {
-    errorMessage.value = 'Nieprawidłowy email lub hasło.'
+  try {
+    const success = await authStore.login(email.value, password.value)
+    if (success) {
+      router.push('/')
+    } else {
+      blad.value = 'Nieprawidłowy email lub hasło.'
+    }
+  } finally {
+    ladowanie.value = false
   }
 }
 </script>
@@ -45,12 +51,12 @@ const handleLogin = async () => {
     </div>
     <h3 class="auth-title">Zaloguj się</h3>
 
-    <div v-if="errorMessage" class="error-box">{{ errorMessage }}</div>
+    <div v-if="blad" class="error-box">{{ blad }}</div>
 
     <div class="form-group">
       <label>Email</label>
       <input
-        v-model="username"
+        v-model="email"
         type="email"
         placeholder="jan.kowalski@email.pl"
         :class="{ 'input-error': bledy.email }"
@@ -70,7 +76,9 @@ const handleLogin = async () => {
       <span v-if="bledy.haslo" class="field-error">{{ bledy.haslo }}</span>
     </div>
 
-    <button @click="handleLogin" class="btn-primary">Zaloguj</button>
+    <button @click="handleLogin" class="btn-primary" :disabled="ladowanie">
+      {{ ladowanie ? 'Logowanie...' : 'Zaloguj się' }}
+    </button>
 
     <p class="auth-footer">
       Nie masz konta? <RouterLink to="/register">Zarejestruj się</RouterLink>
