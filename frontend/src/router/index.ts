@@ -9,6 +9,7 @@ import ReportsView from '../views/ReportsView.vue'
 import CompleteProfileView from '../views/CompleteProfileView.vue'
 import AdminUsersView from '../views/AdminUsersView.vue'
 import AdminAddDoctorView from '../views/AdminAddDoctorView.vue'
+import AdminAddStaffView from '../views/AdminAddStaffView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -65,6 +66,12 @@ const router = createRouter({
       path: '/admin/add-doctor',
       name: 'admin-add-doctor',
       component: AdminAddDoctorView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/admin/add-staff',
+      name: 'admin-add-staff',
+      component: AdminAddStaffView,
       meta: { requiresAuth: true }
     },
   ]
