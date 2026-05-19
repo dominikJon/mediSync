@@ -33,6 +33,7 @@ class Uzytkownik(Base):
     rola = relationship("Rola", back_populates="uzytkownicy")
     pacjent_profil = relationship("Pacjent", back_populates="konto", uselist=False)
     lekarz_profil = relationship("Lekarz", back_populates="konto", uselist=False)
+    pracownik_profil = relationship("Pracownik", back_populates="konto", uselist=False)
 
 # --- MODUŁ PLACÓWKI, ADRESÓW I PERSONELU ---
 
@@ -69,11 +70,12 @@ class Lekarz(Base):
     id = Column(Integer, primary_key=True, index=True)
     imie = Column(String(50), nullable=True)       
     nazwisko = Column(String(100), nullable=True)
-    pesel = Column(String(11), nullable=True)  
+    pesel = Column(String(11), nullable=True)
+    telefon = Column(String(15))  
     uzytkownik_id = Column(Integer, ForeignKey("uzytkownicy.id"), nullable=False)
     placowka_id = Column(Integer, ForeignKey("placowki.id"), nullable=False)
     npwz = Column(String(7), unique=True, nullable=False)
-    status_npwz = Column(String(50), nullable=False)  
+    status_npwz = Column(String(50), nullable=False) 
     waznosc_oc = Column(Date, nullable=False)
      
 
@@ -81,6 +83,20 @@ class Lekarz(Base):
     placowka = relationship("Placowka", back_populates="lekarze")
     specjalizacje = relationship("Specjalizacja", secondary=lekarz_specjalizacja_table, back_populates="lekarze")
     grafiki = relationship("GrafikPracy", back_populates="lekarz")
+
+# --- PROFILE pracownikow ---
+
+class Pracownik(Base):
+    __tablename__ = "pracownicy"
+    id = Column(Integer, primary_key=True, index=True)
+    uzytkownik_id = Column(Integer, ForeignKey("uzytkownicy.id"), nullable=False)
+    imie = Column(String(50), nullable=False)
+    nazwisko = Column(String(100), nullable=False)
+    telefon = Column(String(15))
+    pesel = Column(String(11), nullable=True) 
+
+    konto = relationship("Uzytkownik", back_populates="pracownik_profil")
+
 
 # --- PROFILE UŻYTKOWNIKA ---
 
