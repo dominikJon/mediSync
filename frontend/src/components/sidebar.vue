@@ -18,6 +18,7 @@ const menuPodstawowe = [
 const menuAdmin = [
   { name: 'Użytkownicy', path: '/admin/users', icon: '👥' },
   { name: 'Dodaj lekarza', path: '/admin/add-doctor', icon: '👨‍⚕️' },
+  { name: 'Dodaj pracownika', path: '/admin/add-staff', icon: '👨‍💼' }
 ]
 
 const isAdmin = computed(() => authStore.user?.rola === 'admin')

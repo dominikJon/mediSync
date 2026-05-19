@@ -188,6 +188,7 @@ class DodajLekarzaRequest(BaseModel):
     nazwisko: str
     pesel: Optional[str] = None
     brak_peselu: bool = False
+    telefon: Optional[str] = None,
     npwz: str
     status_npwz: Literal["aktywny", "zawieszony", "wygasły"]
     waznosc_oc: date
@@ -261,6 +262,74 @@ class DodajLekarzaRequest(BaseModel):
 
         self.pesel = pesel_clean
         return self
+
+#Modele pracownikow
+class DodajPracownika(BaseModel):
+    email: str
+    haslo: str
+    imie: str
+    nazwisko: str
+    pesel: Optional[str] = None
+    brak_peselu: bool = False
+    telefon: str
+    rola: Literal["admin", "rejestracja"]
+
+    @field_validator("email")
+    @classmethod
+    def waliduj_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not REGEX_EMAIL.match(v):
+            raise ValueError("Nieprawidłowy format adresu email")
+        return v
+
+    @field_validator("haslo")
+    @classmethod
+    def waliduj_haslo(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("Hasło musi mieć co najmniej 12 znaków")
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną wielką literę")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną małą literę")
+        if not re.search(r"\d", v):
+            raise ValueError("Hasło musi zawierać co najmniej jedną cyfrę")
+        if not REGEX_ZNAK_SPECJALNY.search(v):
+            raise ValueError("Hasło musi zawierać co najmniej jeden znak specjalny")
+        return v
+
+    @field_validator("imie", "nazwisko")
+    @classmethod
+    def waliduj_imie_nazwisko(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Musi mieć co najmniej 2 znaki")
+        if not REGEX_LITERY_PL.match(v):
+            raise ValueError("Dozwolone są tylko litery, spacja i myślnik")
+        return v
+
+    @field_validator("telefon")
+    @classmethod
+    def waliduj_telefon(cls, v: str) -> str:
+        v = v.replace(" ", "")
+        if not REGEX_TELEFON.match(v):
+            raise ValueError("Telefon: 9 cyfr lub +48 i 9 cyfr")
+        return v
+
+    @model_validator(mode="after")
+    def waliduj_pesel_lub_brak(self):
+        if self.brak_peselu:
+            self.pesel = None
+            return self
+        if not self.pesel or not self.pesel.strip():
+            raise ValueError("PESEL jest wymagany (lub zaznacz 'brak PESEL')")
+        pesel_clean = self.pesel.strip()
+        if not re.match(r"^\d{11}$", pesel_clean):
+            raise ValueError("PESEL musi składać się z dokładnie 11 cyfr")
+        if not waliduj_pesel(pesel_clean):
+            raise ValueError("Nieprawidłowy PESEL — błędna cyfra kontrolna")
+        self.pesel = pesel_clean
+        return self
+
 
 
 # ======== HELPERY ========
@@ -423,13 +492,13 @@ def lista_uzytkownikow(
             u.email, 
             u.profil_uzupelniony, 
             r.nazwa AS rola,
-            COALESCE(p.imie, l.imie) AS imie,
-            COALESCE(p.nazwisko, l.nazwisko) AS nazwisko,
-            COALESCE(p.pesel, l.pesel) AS pesel
+            COALESCE(p.imie, l.imie, pr.imie) AS imie,
+            COALESCE(p.nazwisko, l.nazwisko, pr.nazwisko) AS nazwisko
         FROM uzytkownicy u
         JOIN role r ON u.rola_id = r.id
         LEFT JOIN pacjenci p ON u.id = p.uzytkownik_id
         LEFT JOIN lekarze l ON u.id = l.uzytkownik_id
+        LEFT JOIN pracownicy pr ON u.id = pr.uzytkownik_id
         ORDER BY u.id DESC
     """)).fetchall()
 
@@ -442,7 +511,6 @@ def lista_uzytkownikow(
                 "profil_uzupelniony": w.profil_uzupelniony,
                 "imie": w.imie,
                 "nazwisko": w.nazwisko,
-                "pesel": w.pesel,
             }
             for w in wyniki
         ]
@@ -502,8 +570,8 @@ def dodaj_lekarza(
 
         # Utwórz profil lekarza
         nowy_lekarz = db.execute(text("""
-            INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc)
-            VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc)
+            INSERT INTO lekarze (uzytkownik_id, placowka_id, imie, nazwisko, pesel, npwz, status_npwz, waznosc_oc, telefon)
+            VALUES (:uzytkownik_id, :placowka_id, :imie, :nazwisko, :pesel, :npwz, :status_npwz, :waznosc_oc, :telefon)
             RETURNING id
         """), {
             "uzytkownik_id": nowy_user.id,
@@ -514,6 +582,7 @@ def dodaj_lekarza(
             "npwz": request.npwz,
             "status_npwz": request.status_npwz,
             "waznosc_oc": request.waznosc_oc,
+            "telefon": request.telefon,
         }).fetchone()
 
         # Przypisz specjalizacje
@@ -558,3 +627,69 @@ def lista_specjalizacji(
 ):
     wyniki = db.execute(text("SELECT id, nazwa FROM specjalizacje ORDER BY nazwa")).fetchall()
     return {"specjalizacje": [{"id": w.id, "nazwa": w.nazwa} for w in wyniki]}
+
+@app.post("/api/admin/add-staff", status_code=201)
+def dodaj_pracownika(
+    request: DodajPracownika,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin)
+):
+    try:
+        # Sprawdź czy email zajęty
+        if db.execute(text("SELECT id FROM uzytkownicy WHERE email = :email"),
+                    {"email": request.email}).fetchone():
+            raise HTTPException(status_code=409, detail="Email już istnieje")
+
+        # Sprawdź unikalność PESEL (tylko dla lekarzy z PESELem)
+        if not request.brak_peselu and request.pesel:
+            if db.execute(text("SELECT id FROM pracownicy WHERE pesel = :pesel"),
+                        {"pesel": request.pesel}).fetchone():
+                raise HTTPException(status_code=409, detail="Pracownik z tym PESELem już istnieje")
+
+        # Pobierz rolę lekarza
+        rola = db.execute(
+            text("SELECT id FROM role WHERE nazwa = :nazwa"),
+            {"nazwa": request.rola}
+            ).fetchone()
+        if not rola:
+            raise HTTPException(status_code=500, detail=f"Brak roli '{request.rola}' w bazie")
+
+        # Utwórz konto użytkownika
+        haslo_hash = pwd_context.hash(request.haslo)
+        nowy_user = db.execute(text("""
+            INSERT INTO uzytkownicy (email, haslo_hash, rola_id, profil_uzupelniony)
+            VALUES (:email, :haslo_hash, :rola_id, TRUE)
+            RETURNING id
+        """), {
+            "email": request.email,
+            "haslo_hash": haslo_hash,
+            "rola_id": rola.id,
+        }).fetchone()
+
+        # Utwórz profil pracownika
+        nowy_pracownik = db.execute(text("""
+            INSERT INTO pracownicy (uzytkownik_id, imie, nazwisko, pesel, telefon)
+            VALUES (:uzytkownik_id, :imie, :nazwisko, :pesel, :telefon)
+            RETURNING id
+        """), {
+            "uzytkownik_id": nowy_user.id,
+            "imie": request.imie,
+            "nazwisko": request.nazwisko,
+            "pesel": request.pesel,
+            "telefon": request.telefon,
+        }).fetchone()
+
+        db.commit()
+
+        return {
+            "status": "sukces",
+            "pracownik_id": nowy_pracownik.id,
+            "uzytkownik_id": nowy_user.id,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas dodawania pracownika: {str(e)}")
