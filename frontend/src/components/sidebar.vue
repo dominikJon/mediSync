@@ -18,10 +18,17 @@ const menuPodstawowe = [
 const menuAdmin = [
   { name: 'Użytkownicy', path: '/admin/users', icon: '👥' },
   { name: 'Dodaj lekarza', path: '/admin/add-doctor', icon: '👨‍⚕️' },
-  { name: 'Dodaj pracownika', path: '/admin/add-staff', icon: '👨‍💼' }
+  { name: 'Dodaj pracownika', path: '/admin/add-staff', icon: '👨‍💼' },
+  { name: 'Gabinety', path: '/reception/office', icon: '🏥' }
 ]
 
+// Menu tylko dla rejestracji
+const menuReceptionist = [
+  { name: 'Gabinety', path: '/reception/office', icon: '🏥' }
+] 
+
 const isAdmin = computed(() => authStore.user?.rola === 'admin')
+const isReceptionist = computed(() => authStore.user?.rola === 'rejestracja')
 
 const handleLogout = () => {
   authStore.logout()
@@ -59,6 +66,23 @@ const handleLogout = () => {
         :key="item.path"
         :to="item.path"
         class="nav-link admin-link"
+        active-class="active"
+      >
+        <span class="icon">{{ item.icon }}</span>
+        {{ item.name }}
+      </RouterLink>
+
+      <!-- Sekcja rejestracji — widoczna tylko dla roli rejestracja -->
+      <div v-if="isReceptionist" class="section-divider">
+        <span>Panel Rejestracji</span>
+      </div>
+
+      <RouterLink
+        v-if="isReceptionist"
+        v-for="item in menuReceptionist"
+        :key="item.path"
+        :to="item.path"
+        class="nav-link receptionist-link"
         active-class="active"
       >
         <span class="icon">{{ item.icon }}</span>
