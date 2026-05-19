@@ -10,6 +10,7 @@ import CompleteProfileView from '../views/CompleteProfileView.vue'
 import AdminUsersView from '../views/AdminUsersView.vue'
 import AdminAddDoctorView from '../views/AdminAddDoctorView.vue'
 import AdminAddStaffView from '../views/AdminAddStaffView.vue'
+import ReceptionOfficeView from '../views/ReceptionOfficeView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -74,6 +75,12 @@ const router = createRouter({
       component: AdminAddStaffView,
       meta: { requiresAuth: true }
     },
+    {
+      path: '/reception/office',
+      name: 'reception-office',
+      component: ReceptionOfficeView,
+      meta: { requiresAuth: true }
+    }
   ]
 })
 
