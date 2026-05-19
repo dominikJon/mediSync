@@ -188,7 +188,7 @@ class DodajLekarzaRequest(BaseModel):
     nazwisko: str
     pesel: Optional[str] = None
     brak_peselu: bool = False
-    telefon: Optional[str] = None,
+    telefon: Optional[str] = None
     npwz: str
     status_npwz: Literal["aktywny", "zawieszony", "wygasły"]
     waznosc_oc: date
@@ -330,6 +330,24 @@ class DodajPracownika(BaseModel):
         self.pesel = pesel_clean
         return self
 
+#Modele gabinet - dodawanie gabinetu
+class DodajGabinetRequest(BaseModel):
+    numer: str
+    status: Literal["Dostępny", "Niedostępny"] = "Dostępny"
+
+    @field_validator("numer")
+    @classmethod
+    def waliduj_numer(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Numer gabinetu jest wymagany")
+        if len(v) > 10:
+            raise ValueError("Numer gabinetu max 10 znaków")
+        return v
+
+class ZmienStatusGabinetuRequest(BaseModel):
+    status: Literal["Dostępny", "Niedostępny"]
+
 
 
 # ======== HELPERY ========
@@ -357,6 +375,14 @@ def tylko_admin(authorization: str = Header(default=None)) -> dict:
     if payload.get("rola") != "admin":
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola admin")
     return payload
+
+# helper do harmonogramu, gabinetu itd. tylko dla admina i pracownika rejestracji
+def tylko_admin_lub_rejestracja(authorization: str = Header(default=None)) -> dict:
+    payload = weryfikuj_token(authorization)
+    if payload.get("rola") not in ["admin", "rejestracja"]:
+        raise HTTPException(status_code=403, detail="Brak uprawnień")
+    return payload
+
 
 
 # ======== ENDPOINTY ========
@@ -693,3 +719,91 @@ def dodaj_pracownika(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Błąd podczas dodawania pracownika: {str(e)}")
+
+# ======== ENDPOINTY GABINETY ========
+
+#POBARANIE LISTY GABINETOW
+@app.get("/api/reception/gabinety")
+def lista_gabinetow(
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    wyniki = db.execute(text("SELECT id, numer, status FROM gabinety ORDER BY numer")).fetchall()
+    return {"gabinety": [{"id": w.id, "numer": w.numer, "status": w.status} for w in wyniki]}
+
+#DODAWANIE GABINETU
+@app.post("/api/reception/gabinety", status_code=201)
+def dodaj_gabinet(
+    request: DodajGabinetRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    try:
+        # sprawdzanie czy gabinet o tym nr istnieje
+        istniejacy = db.execute(text("SELECT id FROM gabinety WHERE numer = :numer"), {"numer": request.numer}).fetchone()
+
+        if istniejacy:
+            raise HTTPException(status_code=409, detail="Gabinet o tym numerze już istnieje")
+
+        # dodawanie nowego gabinetu - nie istneje
+        nowy_gabinet = db.execute(text("""
+            INSERT INTO gabinety (numer, status)
+            VALUES (:numer, :status)
+            RETURNING id
+        """), {
+            "numer": request.numer,
+            "status": request.status,
+        }).fetchone()
+
+        db.commit()
+
+        return {
+            "status": "sukces",
+            "gabinet_id": nowy_gabinet.id,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas dodawania gabinetu: {str(e)}")
+
+#ZMIANA STATUSU GABINETU
+@app.patch("/api/reception/gabinety/{gabinet_id}/status")
+def zmien_status_gabinetu(
+    gabinet_id: int,
+    request: ZmienStatusGabinetuRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    try:
+        # sprawdzanie czy gabinet istnieje
+        gabinet = db.execute(text("SELECT id FROM gabinety WHERE id = :id"), {"id": gabinet_id}).fetchone()
+
+        if not gabinet:
+            raise HTTPException(status_code=404, detail="Podany gabinet nie istnieje")
+
+        # aktualizacja statusu gabinetu
+        db.execute(text("""
+            UPDATE gabinety
+            SET status = :status
+            WHERE id = :id
+        """), {
+            "status": request.status,
+            "id": gabinet_id,
+        })
+
+        db.commit()
+
+        return {
+            "status": "sukces",
+            "wiadomosc": f"Status gabinetu {gabinet_id} został zmieniony na {request.status}",
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas zmiany statusu gabinetu: {str(e)}")
