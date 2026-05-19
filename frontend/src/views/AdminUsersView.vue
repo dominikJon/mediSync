@@ -9,7 +9,6 @@ interface Uzytkownik {
   profil_uzupelniony: boolean
   imie: string | null
   nazwisko: string | null
-  pesel: string | null
 }
 
 const uzytkownicy = ref<Uzytkownik[]>([])
@@ -35,6 +34,7 @@ const roleKolor = (rola: string) => {
   switch (rola) {
     case 'admin': return 'badge-admin'
     case 'lekarz': return 'badge-lekarz'
+    case 'rejestracja': return 'badge-rejestracja'
     default: return 'badge-pacjent'
   }
 }
@@ -46,10 +46,17 @@ onMounted(pobierzUzytkownikow)
   <div class="page">
     <div class="page-header">
       <h1>Użytkownicy systemu</h1>
-      <RouterLink to="/admin/add-doctor" class="btn-primary">
-        + Dodaj lekarza
-      </RouterLink>
+        <div class="header-actions">
+          <RouterLink to="/admin/add-doctor" class="btn-primary">
+            + Dodaj lekarza
+          </RouterLink>
+          
+          <RouterLink to="/admin/add-staff" class="btn-primary">
+            + Dodaj pracownika
+          </RouterLink>
+      </div>
     </div>
+    
 
     <div v-if="ladowanie" class="loading">Ładowanie...</div>
 
@@ -62,7 +69,6 @@ onMounted(pobierzUzytkownikow)
             <th>ID</th>
             <th>Email</th>
             <th>Imię i nazwisko</th>
-            <th>PESEL</th>
             <th>Rola</th>
             <th>Kartoteka</th>
           </tr>
@@ -74,7 +80,6 @@ onMounted(pobierzUzytkownikow)
             <td>
               {{ u.imie && u.nazwisko ? `${u.imie} ${u.nazwisko}` : '—' }}
             </td>
-            <td>{{ u.pesel ?? '—' }}</td>
             <td>
               <span :class="['badge', roleKolor(u.rola)]">
                 {{ u.rola }}
@@ -110,6 +115,12 @@ onMounted(pobierzUzytkownikow)
   font-weight: 700;
   color: #1e293b;
   margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .btn-primary {
@@ -201,6 +212,11 @@ onMounted(pobierzUzytkownikow)
 .badge-lekarz {
   background: #dbeafe;
   color: #1e40af;
+}
+
+.badge-rejestracja {
+  background: #dfbbf7;
+  color: #7f1eaf;
 }
 
 .badge-pacjent {

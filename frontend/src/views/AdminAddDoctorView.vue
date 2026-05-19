@@ -10,6 +10,7 @@ const nazwisko = ref('')
 const npwz = ref('')
 const status_npwz = ref('aktywny')
 const waznosc_oc = ref('')
+const telefon = ref('')
 const placowka_id = ref<number | null>(null)
 const wybrane_specjalizacje = ref<number[]>([])
 
@@ -28,6 +29,13 @@ const bledy = ref<Record<string, string>>({})
 // Auto-formatowanie PESEL — tylko cyfry, max 11
 watch(pesel, (val) => {
   pesel.value = val.replace(/\D/g, '').slice(0, 11)
+})
+
+// Auto-formatowanie telefonu — tylko cyfry/+, max 13 znaków
+watch(telefon, (val) => {
+  // Dozwolone: opcjonalne +48 na początku, potem 9 cyfr
+  const cleaned = val.replace(/[^\d+]/g, '')
+  telefon.value = cleaned.slice(0, 13)
 })
 
 // Auto-formatowanie NPWZ — tylko cyfry, max 7
@@ -75,6 +83,11 @@ const walidujPesel = (p: string): boolean => {
 
 const walidujEmail = (e: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)
+}
+
+const walidujTelefon = (t: string): boolean => {
+  // Akceptuje: 9 cyfr LUB +48 + 9 cyfr
+  return /^(\+48)?\d{9}$/.test(t)
 }
 
 // Zwraca null jak OK, albo komunikat błędu
@@ -131,6 +144,13 @@ const waliduj = (): boolean => {
     } else if (!walidujPesel(pesel.value)) {
       bledy.value.pesel = 'Nieprawidłowy PESEL — błędna cyfra kontrolna'
     }
+  }
+
+  //telefon
+  if (!telefon.value) {
+    bledy.value.telefon = 'Numer telefonu jest wymagany'
+  } else if (!walidujTelefon(telefon.value)) {
+    bledy.value.telefon = 'Podaj 9 cyfr lub numer z +48 (np. 123456789 lub +48123456789)'
   }
 
   // NPWZ — długość + regex
@@ -193,6 +213,7 @@ const handleSubmit = async () => {
       status_npwz: status_npwz.value,
       waznosc_oc: waznosc_oc.value,
       placowka_id: placowka_id.value,
+      telefon: telefon.value,
       specjalizacje_ids: wybrane_specjalizacje.value,
     })
 
@@ -208,6 +229,7 @@ const handleSubmit = async () => {
     status_npwz.value = 'aktywny'
     waznosc_oc.value = ''
     placowka_id.value = null
+    telefon.value = ''
     wybrane_specjalizacje.value = []
     bledy.value = {}
 
@@ -295,7 +317,17 @@ onMounted(pobierzDane)
           <span v-if="bledy.nazwisko" class="field-error">{{ bledy.nazwisko }}</span>
         </div>
 
-        <div class="form-group full">
+        <div class="form-group">
+          <label>Numer telefonu *</label>
+          <input v-model="telefon"
+            type="tel"
+            placeholder="123456789 lub +48123456789"
+            :class="{ 'input-error': bledy.telefon }"
+          />
+          <span v-if="bledy.telefon" class="field-error">{{ bledy.telefon }}</span>
+        </div>
+
+        <div class="form-group">
           <label>PESEL <span class="hint">(11 cyfr)</span></label>
           <input
             v-model="pesel"
