@@ -28,7 +28,9 @@ class Uzytkownik(Base):
     rola_id = Column(Integer, ForeignKey("role.id"), nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     haslo_hash = Column(String(255), nullable=False)
-    profil_uzupelniony = Column(Boolean, default=False)  
+    profil_uzupelniony = Column(Boolean, default=False)
+    reset_token = Column(String(100), nullable=True)
+    reset_token_expires = Column(DateTime, nullable=True)  
 
     rola = relationship("Rola", back_populates="uzytkownicy")
     pacjent_profil = relationship("Pacjent", back_populates="konto", uselist=False)
