@@ -12,6 +12,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
 
+  mailpit:
+    image: axllent/mailpit
+    container_name: medisync_mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
   backend:
     build: ./backend
     container_name: medisync_backend
@@ -22,6 +30,7 @@ services:
       - .env
     depends_on:
       - db
+      - mailpit
 
 volumes:
   postgres_data:
