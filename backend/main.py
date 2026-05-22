@@ -10,6 +10,9 @@ from typing import Optional, Literal
 import os
 import re
 from database import get_db
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from typing import Optional
+import secrets
 
 # Konfiguracja
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -30,7 +33,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Konfiguracja FastMail
+mail_config = ConnectionConfig(
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME", ""),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD", ""),
+    MAIL_FROM=os.getenv("MAIL_FROM", "noreply@medisync.pl"),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", 1025)),
+    MAIL_SERVER=os.getenv("MAIL_SERVER", "mailpit"),
+    MAIL_STARTTLS=False,
+    MAIL_SSL_TLS=False,
+    USE_CREDENTIALS=False,
+)
 
+fastmail = FastMail(mail_config)
 
 # ======== HELPERY WALIDACYJNE ========
 
@@ -100,6 +115,13 @@ class RejestracjaRequest(BaseModel):
         if not REGEX_ZNAK_SPECJALNY.search(v):
             raise ValueError("Hasło musi zawierać co najmniej jeden znak specjalny")
         return v
+
+
+class NoweHasloRequest(BaseModel):
+    token: str
+    nowe_haslo: str
+
+
 
 
 class KartotekaRequest(BaseModel):
@@ -456,6 +478,82 @@ def rejestracja(request: RejestracjaRequest, db: Session = Depends(get_db)):
             "email": wynik.email,
         }
     }
+
+    @app.post("/api/forgot-password", status_code=200)
+async def zapomniane_haslo(request: ResetHaslaRequest, db: Session = Depends(get_db)):
+    uzytkownik = db.execute(
+        text("SELECT id, email FROM uzytkownicy WHERE email = :email"),
+        {"email": request.email}
+    ).fetchone()
+
+    # Zawsze zwracamy sukces — nie zdradzamy czy email istnieje
+    if not uzytkownik:
+        return {"status": "sukces"}
+
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(hours=1)
+
+    db.execute(text("""
+        UPDATE uzytkownicy 
+        SET reset_token = :token, reset_token_expires = :expires
+        WHERE id = :id
+    """), {"token": token, "expires": expires, "id": uzytkownik.id})
+    db.commit()
+
+    link = f"http://localhost:5173/reset-password?token={token}"
+
+    message = MessageSchema(
+        subject="Reset hasła — MediSync",
+        recipients=[uzytkownik.email],
+        body=f"""
+        <h2>Reset hasła MediSync</h2>
+        <p>Otrzymaliśmy prośbę o reset hasła dla Twojego konta.</p>
+        <p>Kliknij poniższy link aby ustawić nowe hasło:</p>
+        <a href="{link}" style="
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+        ">Resetuj hasło</a>
+        <p>Link jest ważny przez <strong>1 godzinę</strong>.</p>
+        <p>Jeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.</p>
+        <br>
+        <p>Zespół MediSync</p>
+        """,
+        subtype="html"
+    )
+
+    await fastmail.send_message(message)
+    return {"status": "sukces"}
+
+
+@app.post("/api/reset-password", status_code=200)
+def reset_hasla(request: NoweHasloRequest, db: Session = Depends(get_db)):
+    uzytkownik = db.execute(text("""
+        SELECT id FROM uzytkownicy 
+        WHERE reset_token = :token 
+        AND reset_token_expires > :teraz
+    """), {"token": request.token, "teraz": datetime.utcnow()}).fetchone()
+
+    if not uzytkownik:
+        raise HTTPException(status_code=400, detail="Token jest nieprawidłowy lub wygasł")
+
+    if len(request.nowe_haslo) < 8:
+        raise HTTPException(status_code=422, detail="Hasło musi mieć co najmniej 8 znaków")
+
+    nowy_hash = pwd_context.hash(request.nowe_haslo)
+
+    db.execute(text("""
+        UPDATE uzytkownicy 
+        SET haslo_hash = :hash, reset_token = NULL, reset_token_expires = NULL
+        WHERE id = :id
+    """), {"hash": nowy_hash, "id": uzytkownik.id})
+    db.commit()
+
+    return {"status": "sukces"}
 
 
 @app.post("/api/complete-profile", status_code=200)

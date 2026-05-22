@@ -11,6 +11,9 @@ import AdminUsersView from '../views/AdminUsersView.vue'
 import AdminAddDoctorView from '../views/AdminAddDoctorView.vue'
 import AdminAddStaffView from '../views/AdminAddStaffView.vue'
 import ReceptionOfficeView from '../views/ReceptionOfficeView.vue'
+import ForgotPasswordView from '../views/ForgotPasswordView.vue'
+import ResetPasswordView from '../views/ResetPasswordView.vue'
+
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -31,6 +34,18 @@ const router = createRouter({
       path: '/register',
       name: 'register',
       component: RegisterView,
+      meta: { hideSidebar: true, guestOnly: true }
+    },
+    {
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: ForgotPasswordView,
+      meta: { hideSidebar: true, guestOnly: true }
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: ResetPasswordView,
       meta: { hideSidebar: true, guestOnly: true }
     },
     {
