@@ -25,6 +25,8 @@ const waliduj = () => {
   return Object.keys(bledy.value).length === 0
 }
 
+
+
 const handleLogin = async () => {
   blad.value = ''
   if (!waliduj()) return
@@ -73,6 +75,9 @@ const handleLogin = async () => {
         :class="{ 'input-error': bledy.haslo }"
         @keyup.enter="handleLogin"
       />
+      <p class="forgot-link">
+      <RouterLink to="/forgot-password">Nie pamiętasz hasła?</RouterLink>
+      </p>
       <span v-if="bledy.haslo" class="field-error">{{ bledy.haslo }}</span>
     </div>
 
@@ -169,4 +174,13 @@ const handleLogin = async () => {
 
 .auth-footer { margin-top: 24px; font-size: 14px; color: #64748b; }
 .auth-footer a { color: #3b82f6; text-decoration: none; font-weight: 600; }
+
+.forgot-link {
+  text-align: right;
+  margin-top: -12px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  margin-top: 7.5px;
+}
+.forgot-link a { color: #3b82f6; text-decoration: none; font-weight: 600; }
 </style>

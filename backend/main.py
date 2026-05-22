@@ -14,6 +14,7 @@ from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from typing import Optional
 import secrets
 
+
 # Konfiguracja
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
@@ -114,6 +115,17 @@ class RejestracjaRequest(BaseModel):
             raise ValueError("Hasło musi zawierać co najmniej jedną cyfrę")
         if not REGEX_ZNAK_SPECJALNY.search(v):
             raise ValueError("Hasło musi zawierać co najmniej jeden znak specjalny")
+        return v
+
+class ResetHaslaRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def waliduj_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not REGEX_EMAIL.match(v):
+            raise ValueError("Nieprawidłowy format adresu email")
         return v
 
 
@@ -479,7 +491,7 @@ def rejestracja(request: RejestracjaRequest, db: Session = Depends(get_db)):
         }
     }
 
-    @app.post("/api/forgot-password", status_code=200)
+@app.post("/api/forgot-password", status_code=200)
 async def zapomniane_haslo(request: ResetHaslaRequest, db: Session = Depends(get_db)):
     uzytkownik = db.execute(
         text("SELECT id, email FROM uzytkownicy WHERE email = :email"),
@@ -491,7 +503,7 @@ async def zapomniane_haslo(request: ResetHaslaRequest, db: Session = Depends(get
         return {"status": "sukces"}
 
     token = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(hours=1)
+    expires = datetime.utcnow() + timedelta(minutes=15)
 
     db.execute(text("""
         UPDATE uzytkownicy 
@@ -518,7 +530,7 @@ async def zapomniane_haslo(request: ResetHaslaRequest, db: Session = Depends(get
             border-radius: 8px;
             font-weight: bold;
         ">Resetuj hasło</a>
-        <p>Link jest ważny przez <strong>1 godzinę</strong>.</p>
+        <p>Link jest ważny przez <strong>15 minut</strong>.</p>
         <p>Jeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.</p>
         <br>
         <p>Zespół MediSync</p>
@@ -541,8 +553,8 @@ def reset_hasla(request: NoweHasloRequest, db: Session = Depends(get_db)):
     if not uzytkownik:
         raise HTTPException(status_code=400, detail="Token jest nieprawidłowy lub wygasł")
 
-    if len(request.nowe_haslo) < 8:
-        raise HTTPException(status_code=422, detail="Hasło musi mieć co najmniej 8 znaków")
+    if len(request.nowe_haslo) < 12:
+        raise HTTPException(status_code=422, detail="Hasło musi mieć co najmniej 12 znaków")
 
     nowy_hash = pwd_context.hash(request.nowe_haslo)
 
