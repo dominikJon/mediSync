@@ -7,6 +7,7 @@ from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional, Literal
+from fastapi import Query
 import os
 import re
 from database import get_db
@@ -381,6 +382,32 @@ class DodajGabinetRequest(BaseModel):
 
 class ZmienStatusGabinetuRequest(BaseModel):
     status: Literal["Dostępny", "Niedostępny"]
+
+# modele grafik
+
+class DodajGrafikRequest(BaseModel):
+    lekarz_id: int = Field(gt=0)
+    gabinet_id: int = Field(gt=0)
+    data: date
+    godzina_od: str   # format "HH:MM"
+    godzina_do: str   # format "HH:MM"
+    co_ile_minut: int = Literal[15, 20, 30, 45, 60]
+
+    @model_validator(mode="after")
+    def waliduj_terminy(self):
+        #czy data z przyszłosci
+        if self.data < date.today():
+            raise ValueError("Data musi być dzisiejsza lub z przyszłości")
+        # sprawdzanie godzin od i do
+        regex_godziny = r"^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$"
+        if not re.match(regex_godziny, self.godzina_od):
+            raise ValueError("godzina_od musi być poprawną godziną w formacie HH:MM (00:00 - 23:59)")
+        if not re.match(regex_godziny, self.godzina_do):
+            raise ValueError("godzina_do musi być poprawną godziną w formacie HH:MM (00:00 - 23:59)")
+        
+        if self.godzina_od >= self.godzina_do:
+            raise ValueError("godzina_od musi być wcześniejsza niż godzina_do")
+        return self
 
 
 
@@ -917,3 +944,187 @@ def zmien_status_gabinetu(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Błąd podczas zmiany statusu gabinetu: {str(e)}")
+
+# ======== ENDPOINTY GRAFIK ========
+
+@app.get("/api/reception/lekarze")
+def lista_lekarzy(
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    wyniki = db.execute(text("""
+        SELECT 
+            l.id, 
+            l.imie, 
+            l.nazwisko, 
+            array_remove(array_agg(s.nazwa), NULL) AS specjalizacje
+        FROM lekarze l
+        JOIN uzytkownicy u ON l.uzytkownik_id = u.id
+        LEFT JOIN lekarz_specjalizacja ls ON l.id = ls.lekarz_id
+        LEFT JOIN specjalizacje s ON ls.specjalizacja_id = s.id
+        GROUP BY l.id, l.imie, l.nazwisko
+        ORDER BY l.nazwisko, l.imie""")).fetchall()
+    return {
+        "lekarze": [
+            {
+                "id": w.id,
+                "imie": w.imie,
+                "nazwisko": w.nazwisko,
+                "specjalizacje": w.specjalizacje
+            }
+            for w in wyniki
+        ]
+    }
+
+@app.get("/api/reception/grafiki")
+def lista_grafiku(
+    data: date = Query(..., description="Data w formacie YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    wyniki = db.execute(text("""
+        SELECT 
+            gp.id, 
+            l.imie AS lekarz_imie, 
+            l.nazwisko AS lekarz_nazwisko, 
+            g.numer AS gabinet_numer, 
+            gp.termin_od, 
+            gp.termin_do, 
+            CASE WHEN w.id IS NOT NULL THEN true ELSE false END AS zajety
+        FROM grafiki_pracy gp
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        LEFT JOIN wizyty w ON w.grafik_id = gp.id
+        WHERE DATE(gp.termin_od) = :data
+        ORDER BY gp.termin_od, l.nazwisko"""), {"data": data}).fetchall()
+    return {
+        "grafiki": [
+            {
+                "id": w.id,
+                "lekarz": f"{w.lekarz_imie} {w.lekarz_nazwisko}",
+                "gabinet": w.gabinet_numer,
+                "termin_od": w.termin_od,
+                "termin_do": w.termin_do,
+                "zajety": w.zajety
+            }
+            for w in wyniki
+        ]
+    }
+
+    
+
+
+@app.post("/api/reception/grafiki", status_code=201)
+def dodaj_grafik(
+    request: DodajGrafikRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    try:
+        # 1. Parsowanie czasu z Pydantic do obiektów datetime
+        h_od, m_od = map(int, request.godzina_od.split(":"))
+        h_do, m_do = map(int, request.godzina_do.split(":"))
+
+        poczatek_bloku = datetime(request.data.year, request.data.month, request.data.day, h_od, m_od)
+        koniec_bloku = datetime(request.data.year, request.data.month, request.data.day, h_do, m_do)
+
+        # 2. Inżynierska optymalizacja (1 zapytanie zamiast pętli zapytań)
+        # Sprawdzamy, czy CAŁY zadeklarowany blok czasu koliduje z czymś w bazie
+        kolizja = db.execute(text("""
+            SELECT id FROM grafiki_pracy
+            WHERE (lekarz_id = :lekarz_id OR gabinet_id = :gabinet_id)
+            AND termin_od < :koniec_bloku
+            AND termin_do > :poczatek_bloku
+            LIMIT 1
+        """), {
+            "lekarz_id": request.lekarz_id,
+            "gabinet_id": request.gabinet_id,
+            "poczatek_bloku": poczatek_bloku,
+            "koniec_bloku": koniec_bloku
+        }).fetchone()
+
+        if kolizja:
+            raise HTTPException(
+                status_code=409, 
+                detail="Wykryto kolizję! Lekarz lub gabinet jest już zajęty w tym przedziale czasowym."
+            )
+
+        # 3. Generowanie slotów (logika w pamięci RAM, bardzo szybka)
+        sloty = []
+        aktualny = poczatek_bloku
+        krok = timedelta(minutes=request.co_ile_minut)
+
+        while aktualny + krok <= koniec_bloku:
+            sloty.append({
+                "lekarz_id": request.lekarz_id,
+                "gabinet_id": request.gabinet_id,
+                "termin_od": aktualny,
+                "termin_do": aktualny + krok
+            })
+            aktualny += krok
+
+        if not sloty:
+            raise HTTPException(status_code=400, detail="Przedział czasu jest za krótki, aby wygenerować chociaż jeden slot.")
+
+        # 4. Batch Insert (wstawienie całej listy słowników jednym uderzeniem do bazy)
+        db.execute(text("""
+            INSERT INTO grafiki_pracy (lekarz_id, gabinet_id, termin_od, termin_do)
+            VALUES (:lekarz_id, :gabinet_id, :termin_od, :termin_do)
+        """), sloty)
+
+        db.commit()
+
+        return {
+            "status": "sukces",
+            "dodano_slotow": len(sloty)
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas generowania grafiku: {str(e)}")
+
+
+@app.delete("/api/reception/grafiki/{grafik_id}")
+def usun_slot_grafiku(
+    grafik_id: int,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    try:
+        # 1. Sprawdź, czy slot istnieje
+        slot = db.execute(
+            text("SELECT id FROM grafiki_pracy WHERE id = :id"), 
+            {"id": grafik_id}
+        ).fetchone()
+        
+        if not slot:
+            raise HTTPException(status_code=404, detail="Podany slot nie istnieje")
+
+        # 2. Sprawdź powiązane wizyty (Integralność danych)
+        wizyta = db.execute(
+            text("SELECT id FROM wizyty WHERE grafik_id = :grafik_id"), 
+            {"grafik_id": grafik_id}
+        ).fetchone()
+        
+        if wizyta:
+            raise HTTPException(status_code=409, detail="Nie można usunąć — slot ma już przypisaną wizytę!")
+
+        # 3. Bezpieczne usunięcie
+        db.execute(
+            text("DELETE FROM grafiki_pracy WHERE id = :id"), 
+            {"id": grafik_id}
+        )
+        
+        db.commit()
+
+        return {"status": "sukces", "wiadomosc": "Slot został pomyślnie usunięty"}
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas usuwania slotu: {str(e)}")
