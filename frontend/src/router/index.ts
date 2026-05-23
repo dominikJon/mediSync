@@ -13,6 +13,7 @@ import AdminAddStaffView from '../views/AdminAddStaffView.vue'
 import ReceptionOfficeView from '../views/ReceptionOfficeView.vue'
 import ForgotPasswordView from '../views/ForgotPasswordView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
+import ReceptionGraphicView from '../views/ReceptionGraphicView.vue'
 
 
 const router = createRouter({
@@ -94,6 +95,12 @@ const router = createRouter({
       path: '/reception/office',
       name: 'reception-office',
       component: ReceptionOfficeView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/reception/graphic',
+      name: 'reception-graphic',
+      component: ReceptionGraphicView,
       meta: { requiresAuth: true }
     }
   ]
