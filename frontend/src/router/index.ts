@@ -14,7 +14,7 @@ import ReceptionOfficeView from '../views/ReceptionOfficeView.vue'
 import ForgotPasswordView from '../views/ForgotPasswordView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
 import ReceptionGraphicView from '../views/ReceptionGraphicView.vue'
-
+import AdminUserView from '../views/AdminUserView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -77,6 +77,12 @@ const router = createRouter({
       path: '/admin/users',
       name: 'admin-users',
       component: AdminUsersView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/admin/user/:id',
+      name: 'admin-user',
+      component: AdminUserView,
       meta: { requiresAuth: true }
     },
     {
