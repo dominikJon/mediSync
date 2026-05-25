@@ -100,7 +100,7 @@ const zapiszZmiany = async () => {
 }
 
 const resetujHaslo = async () => {
-  if (!confirm(`Czy na pewno chcesz zresetować hasło użytkownika ${uzytkownik.value?.email}? Nowe hasło zostanie wysłane emailem.`))
+  if (!confirm(`Czy na pewno chcesz zresetować hasło użytkownika ${uzytkownik.value?.email}?`))
     return
 
   blad.value = ''
@@ -108,10 +108,10 @@ const resetujHaslo = async () => {
   resetowanie.value = true
 
   try {
-    await axios.post(`/api/admin/user/${userId}/reset-password`)
-    sukces.value = 'Tymczasowe hasło zostało wysłane na adres email użytkownika.'
+    await axios.post('/api/forgot-password', { email: uzytkownik.value.email })
+    sukces.value = 'Link do resetowania hasła został wysłany na adres email użytkownika.'
   } catch {
-    blad.value = 'Błąd podczas resetowania hasła.'
+    blad.value = 'Błąd podczas wysyłania linku resetującego.'
   } finally {
     resetowanie.value = false
   }
@@ -405,7 +405,7 @@ onMounted(pobierzDane)
 .spec-chip:hover { border-color: #3b82f6; color: #3b82f6; }
 .spec-chip.aktywna { border-color: #3b82f6; background: #dbeafe; color: #1e40af; }
 
-.akcje-card { }
+
 .akcje-row { display: flex; gap: 12px; }
 
 .btn-primary {
