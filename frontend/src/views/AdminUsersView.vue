@@ -71,6 +71,7 @@ onMounted(pobierzUzytkownikow)
             <th>Imię i nazwisko</th>
             <th>Rola</th>
             <th>Kartoteka</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -89,6 +90,14 @@ onMounted(pobierzUzytkownikow)
               <span :class="u.profil_uzupelniony ? 'status-ok' : 'status-brak'">
                 {{ u.profil_uzupelniony ? '✓ Uzupełniona' : '✗ Brak' }}
               </span>
+            </td>
+            <td>
+              <button class="btn-edit" @click="$router.push(`/admin/user/${u.id}`)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
             </td>
           </tr>
         </tbody>
@@ -234,5 +243,25 @@ onMounted(pobierzUzytkownikow)
   color: #dc2626;
   font-weight: 600;
   font-size: 13px;
+}
+
+.btn-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.btn-edit:hover {
+  background: #dbeafe;
+  color: #3b82f6;
+  border-color: #3b82f6;
 }
 </style>

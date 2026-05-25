@@ -410,6 +410,26 @@ class DodajGrafikRequest(BaseModel):
         return self
 
 
+class AktualizacjaUzytkownikaRequest(BaseModel):
+    rola: Optional[str] = None
+    imie: Optional[str] = None
+    nazwisko: Optional[str] = None
+    telefon: Optional[str] = None
+    # Pacjent
+    miejscowosc: Optional[str] = None
+    kod_pocztowy: Optional[str] = None
+    ulica: Optional[str] = None
+    nr_domu: Optional[str] = None
+    nr_lokalu: Optional[str] = None
+    # Lekarz
+    specjalizacje_ids: Optional[list[int]] = None
+    placowka_id: Optional[int] = None
+    status_npwz: Optional[str] = None
+    waznosc_oc: Optional[str] = None
+
+
+
+
 
 # ======== HELPERY ========
 
@@ -1128,3 +1148,303 @@ def usun_slot_grafiku(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Błąd podczas usuwania slotu: {str(e)}")
+
+@app.get("/api/admin/user/{user_id}")
+def pobierz_uzytkownika(
+    user_id: int,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin)
+):
+    uzytkownik = db.execute(text("""
+        SELECT u.id, u.email, u.profil_uzupelniony,
+               r.nazwa AS rola
+        FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE u.id = :id
+    """), {"id": user_id}).fetchone()
+
+    if not uzytkownik:
+        raise HTTPException(status_code=404, detail="Użytkownik nie istnieje")
+
+    dane = {
+        "id": uzytkownik.id,
+        "email": uzytkownik.email,
+        "rola": uzytkownik.rola,
+        "profil_uzupelniony": uzytkownik.profil_uzupelniony,
+        "profil": None,
+    }
+
+    if uzytkownik.rola == "pacjent":
+        profil = db.execute(text("""
+            SELECT p.imie, p.nazwisko, p.pesel, p.telefon,
+                   a.miejscowosc, a.kod_pocztowy, a.ulica, a.nr_domu, a.nr_lokalu
+            FROM pacjenci p
+            LEFT JOIN adresy a ON p.adres_id = a.id
+            WHERE p.uzytkownik_id = :id
+        """), {"id": user_id}).fetchone()
+
+        if profil:
+            dane["profil"] = {
+                "imie": profil.imie, "nazwisko": profil.nazwisko,
+                "pesel": profil.pesel, "telefon": profil.telefon,
+                "miejscowosc": profil.miejscowosc, "kod_pocztowy": profil.kod_pocztowy,
+                "ulica": profil.ulica, "nr_domu": profil.nr_domu, "nr_lokalu": profil.nr_lokalu,
+            }
+
+    elif uzytkownik.rola == "lekarz":
+        profil = db.execute(text("""
+            SELECT l.imie, l.nazwisko, l.pesel, l.npwz, l.status_npwz,
+                   l.waznosc_oc, l.placowka_id, p.nazwa AS placowka_nazwa
+            FROM lekarze l
+            LEFT JOIN placowki p ON l.placowka_id = p.id
+            WHERE l.uzytkownik_id = :id
+        """), {"id": user_id}).fetchone()
+
+        specjalizacje = db.execute(text("""
+            SELECT s.id, s.nazwa
+            FROM specjalizacje s
+            JOIN lekarz_specjalizacja ls ON s.id = ls.specjalizacja_id
+            JOIN lekarze l ON ls.lekarz_id = l.id
+            WHERE l.uzytkownik_id = :id
+        """), {"id": user_id}).fetchall()
+
+        if profil:
+            dane["profil"] = {
+                "imie": profil.imie, "nazwisko": profil.nazwisko,
+                "pesel": profil.pesel, "npwz": profil.npwz,
+                "status_npwz": profil.status_npwz,
+                "waznosc_oc": str(profil.waznosc_oc),
+                "placowka_id": profil.placowka_id,
+                "placowka_nazwa": profil.placowka_nazwa,
+                "specjalizacje": [{"id": s.id, "nazwa": s.nazwa} for s in specjalizacje],
+            }
+
+    elif uzytkownik.rola == "pracownik":
+        profil = db.execute(text("""
+            SELECT imie, nazwisko, telefon, pesel
+            FROM pracownicy WHERE uzytkownik_id = :id
+        """), {"id": user_id}).fetchone()
+
+        if profil:
+            dane["profil"] = {
+                "imie": profil.imie, "nazwisko": profil.nazwisko,
+                "telefon": profil.telefon, "pesel": profil.pesel,
+            }
+
+    return dane
+
+
+@app.put("/api/admin/user/{user_id}", status_code=200)
+def aktualizuj_uzytkownika(
+    user_id: int,
+    request: AktualizacjaUzytkownikaRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin)
+):
+    uzytkownik = db.execute(text("""
+        SELECT u.id, r.nazwa AS rola
+        FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE u.id = :id
+    """), {"id": user_id}).fetchone()
+
+    if not uzytkownik:
+        raise HTTPException(status_code=404, detail="Użytkownik nie istnieje")
+
+    # Zmiana roli
+    if request.rola and request.rola != uzytkownik.rola:
+        nowa_rola = db.execute(
+            text("SELECT id FROM role WHERE nazwa = :nazwa"),
+            {"nazwa": request.rola}
+        ).fetchone()
+        if not nowa_rola:
+            raise HTTPException(status_code=404, detail="Rola nie istnieje")
+        db.execute(text("""
+            UPDATE uzytkownicy SET rola_id = :rola_id WHERE id = :id
+        """), {"rola_id": nowa_rola.id, "id": user_id})
+
+    rola = request.rola or uzytkownik.rola
+
+    # Aktualizacja profilu pacjenta
+    if rola == "pacjent":
+        pacjent = db.execute(
+            text("SELECT id, adres_id FROM pacjenci WHERE uzytkownik_id = :id"),
+            {"id": user_id}
+        ).fetchone()
+
+        if pacjent:
+            if request.telefon:
+                db.execute(text("""
+                    UPDATE pacjenci SET telefon = :telefon WHERE uzytkownik_id = :id
+                """), {"telefon": request.telefon, "id": user_id})
+
+            if any([request.miejscowosc, request.kod_pocztowy,
+                    request.ulica, request.nr_domu, request.nr_lokalu]):
+                db.execute(text("""
+                    UPDATE adresy SET
+                        miejscowosc = COALESCE(:miejscowosc, miejscowosc),
+                        kod_pocztowy = COALESCE(:kod_pocztowy, kod_pocztowy),
+                        ulica = COALESCE(:ulica, ulica),
+                        nr_domu = COALESCE(:nr_domu, nr_domu),
+                        nr_lokalu = COALESCE(:nr_lokalu, nr_lokalu)
+                    WHERE id = :adres_id
+                """), {
+                    "miejscowosc": request.miejscowosc,
+                    "kod_pocztowy": request.kod_pocztowy,
+                    "ulica": request.ulica,
+                    "nr_domu": request.nr_domu,
+                    "nr_lokalu": request.nr_lokalu,
+                    "adres_id": pacjent.adres_id,
+                })
+
+    # Aktualizacja profilu lekarza
+    elif rola == "lekarz":
+        lekarz = db.execute(
+            text("SELECT id FROM lekarze WHERE uzytkownik_id = :id"),
+            {"id": user_id}
+        ).fetchone()
+
+        if lekarz:
+            if request.status_npwz or request.waznosc_oc or request.placowka_id:
+                db.execute(text("""
+                    UPDATE lekarze SET
+                        status_npwz = COALESCE(:status_npwz, status_npwz),
+                        waznosc_oc = COALESCE(:waznosc_oc::date, waznosc_oc),
+                        placowka_id = COALESCE(:placowka_id, placowka_id)
+                    WHERE id = :id
+                """), {
+                    "status_npwz": request.status_npwz,
+                    "waznosc_oc": request.waznosc_oc,
+                    "placowka_id": request.placowka_id,
+                    "id": lekarz.id,
+                })
+
+            if request.specjalizacje_ids is not None:
+                db.execute(text("""
+                    DELETE FROM lekarz_specjalizacja WHERE lekarz_id = :id
+                """), {"id": lekarz.id})
+                for spec_id in request.specjalizacje_ids:
+                    db.execute(text("""
+                        INSERT INTO lekarz_specjalizacja (lekarz_id, specjalizacja_id)
+                        VALUES (:lekarz_id, :spec_id)
+                        ON CONFLICT DO NOTHING
+                    """), {"lekarz_id": lekarz.id, "spec_id": spec_id})
+
+    # Aktualizacja pracownika
+    elif rola == "pracownik":
+        if request.telefon:
+            db.execute(text("""
+                UPDATE pracownicy SET telefon = :telefon WHERE uzytkownik_id = :id
+            """), {"telefon": request.telefon, "id": user_id})
+
+    db.commit()
+    return {"status": "sukces"}
+
+
+@app.put("/api/admin/user/{user_id}", status_code=200)
+def aktualizuj_uzytkownika(
+    user_id: int,
+    request: AktualizacjaUzytkownikaRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin)
+):
+    uzytkownik = db.execute(text("""
+        SELECT u.id, r.nazwa AS rola
+        FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE u.id = :id
+    """), {"id": user_id}).fetchone()
+
+    if not uzytkownik:
+        raise HTTPException(status_code=404, detail="Użytkownik nie istnieje")
+
+    # Zmiana roli
+    if request.rola and request.rola != uzytkownik.rola:
+        nowa_rola = db.execute(
+            text("SELECT id FROM role WHERE nazwa = :nazwa"),
+            {"nazwa": request.rola}
+        ).fetchone()
+        if not nowa_rola:
+            raise HTTPException(status_code=404, detail="Rola nie istnieje")
+        db.execute(text("""
+            UPDATE uzytkownicy SET rola_id = :rola_id WHERE id = :id
+        """), {"rola_id": nowa_rola.id, "id": user_id})
+
+    rola = request.rola or uzytkownik.rola
+
+    # Aktualizacja profilu pacjenta
+    if rola == "pacjent":
+        pacjent = db.execute(
+            text("SELECT id, adres_id FROM pacjenci WHERE uzytkownik_id = :id"),
+            {"id": user_id}
+        ).fetchone()
+
+        if pacjent:
+            if request.telefon:
+                db.execute(text("""
+                    UPDATE pacjenci SET telefon = :telefon WHERE uzytkownik_id = :id
+                """), {"telefon": request.telefon, "id": user_id})
+
+            if any([request.miejscowosc, request.kod_pocztowy,
+                    request.ulica, request.nr_domu, request.nr_lokalu]):
+                db.execute(text("""
+                    UPDATE adresy SET
+                        miejscowosc = COALESCE(:miejscowosc, miejscowosc),
+                        kod_pocztowy = COALESCE(:kod_pocztowy, kod_pocztowy),
+                        ulica = COALESCE(:ulica, ulica),
+                        nr_domu = COALESCE(:nr_domu, nr_domu),
+                        nr_lokalu = COALESCE(:nr_lokalu, nr_lokalu)
+                    WHERE id = :adres_id
+                """), {
+                    "miejscowosc": request.miejscowosc,
+                    "kod_pocztowy": request.kod_pocztowy,
+                    "ulica": request.ulica,
+                    "nr_domu": request.nr_domu,
+                    "nr_lokalu": request.nr_lokalu,
+                    "adres_id": pacjent.adres_id,
+                })
+
+    # Aktualizacja profilu lekarza
+    elif rola == "lekarz":
+        lekarz = db.execute(
+            text("SELECT id FROM lekarze WHERE uzytkownik_id = :id"),
+            {"id": user_id}
+        ).fetchone()
+
+        if lekarz:
+            if request.status_npwz or request.waznosc_oc or request.placowka_id:
+                db.execute(text("""
+                    UPDATE lekarze SET
+                        status_npwz = COALESCE(:status_npwz, status_npwz),
+                        waznosc_oc = COALESCE(:waznosc_oc::date, waznosc_oc),
+                        placowka_id = COALESCE(:placowka_id, placowka_id)
+                    WHERE id = :id
+                """), {
+                    "status_npwz": request.status_npwz,
+                    "waznosc_oc": request.waznosc_oc,
+                    "placowka_id": request.placowka_id,
+                    "id": lekarz.id,
+                })
+
+            if request.specjalizacje_ids is not None:
+                db.execute(text("""
+                    DELETE FROM lekarz_specjalizacja WHERE lekarz_id = :id
+                """), {"id": lekarz.id})
+                for spec_id in request.specjalizacje_ids:
+                    db.execute(text("""
+                        INSERT INTO lekarz_specjalizacja (lekarz_id, specjalizacja_id)
+                        VALUES (:lekarz_id, :spec_id)
+                        ON CONFLICT DO NOTHING
+                    """), {"lekarz_id": lekarz.id, "spec_id": spec_id})
+
+    # Aktualizacja pracownika
+    elif rola == "pracownik":
+        if request.telefon:
+            db.execute(text("""
+                UPDATE pracownicy SET telefon = :telefon WHERE uzytkownik_id = :id
+            """), {"telefon": request.telefon, "id": user_id})
+
+    db.commit()
+    return {"status": "sukces"}
+
+
