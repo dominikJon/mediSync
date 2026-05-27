@@ -1,9 +1,11 @@
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from passlib.context import CryptContext
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional, Literal
@@ -12,9 +14,7 @@ import os
 import re
 from database import get_db
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
-from typing import Optional
 import secrets
-
 
 # Konfiguracja
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -24,6 +24,8 @@ ALGORITHM = "HS256"
 TOKEN_WAZNOSC_GODZINY = 8
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/swagger-token")
 
 app = FastAPI()
 
@@ -391,7 +393,7 @@ class DodajGrafikRequest(BaseModel):
     data: date
     godzina_od: str   # format "HH:MM"
     godzina_do: str   # format "HH:MM"
-    co_ile_minut: int = Literal[15, 20, 30, 45, 60]
+    co_ile_minut: Literal[15, 20, 30, 45, 60] = 30 #domyslna wartosc 30 minut
 
     @model_validator(mode="after")
     def waliduj_terminy(self):
@@ -408,6 +410,12 @@ class DodajGrafikRequest(BaseModel):
         if self.godzina_od >= self.godzina_do:
             raise ValueError("godzina_od musi być wcześniejsza niż godzina_do")
         return self
+
+# rezerwacja terminow
+class RezerwacjaRequest(BaseModel):
+    grafik_id: int = Field(gt=0)
+    # pacjent_id pobierany z tokena chyba ze zalogowany jest adm lub rejestacja to:
+    pacjent_id: Optional[int] = None
 
 
 class AktualizacjaUzytkownikaRequest(BaseModel):
@@ -440,10 +448,7 @@ def stworz_token(dane: dict) -> str:
 
 
 # Helper — weryfikacja roli z tokena
-def weryfikuj_token(authorization: str = None) -> dict:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Brak tokena autoryzacyjnego")
-    token = authorization.split(" ")[1]
+def weryfikuj_token(token: str = Depends(oauth2_scheme)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
@@ -451,18 +456,22 @@ def weryfikuj_token(authorization: str = None) -> dict:
         raise HTTPException(status_code=401, detail="Nieprawidłowy token")
 
 
-def tylko_admin(authorization: str = Header(default=None)) -> dict:
-    payload = weryfikuj_token(authorization)
+def tylko_admin(token: str = Depends(oauth2_scheme)) -> dict:
+    payload = weryfikuj_token(token)
     if payload.get("rola") != "admin":
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola admin")
     return payload
 
 # helper do harmonogramu, gabinetu itd. tylko dla admina i pracownika rejestracji
-def tylko_admin_lub_rejestracja(authorization: str = Header(default=None)) -> dict:
-    payload = weryfikuj_token(authorization)
+def tylko_admin_lub_rejestracja(token: str = Depends(oauth2_scheme)) -> dict:
+    payload = weryfikuj_token(token)
     if payload.get("rola") not in ["admin", "rejestracja"]:
         raise HTTPException(status_code=403, detail="Brak uprawnień")
     return payload
+
+# helper do rezerwacji
+def kazdy_zalogowany(token: str = Depends(oauth2_scheme)) -> dict:
+    return weryfikuj_token(token)
 
 
 
@@ -501,6 +510,28 @@ def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
             "profil_uzupelniony": wynik.profil_uzupelniony,
         }
     }
+
+# endpoint dla autoryzacji w swaggerze
+@app.post("/api/auth/swagger-token", include_in_schema=False)
+def swagger_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    zapytanie_sql = text("""
+        SELECT u.id, u.email, u.haslo_hash, r.nazwa AS rola_nazwa
+        FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE u.email = :email
+    """)
+    wynik = db.execute(zapytanie_sql, {"email": form_data.username}).fetchone()
+
+    if not wynik or not pwd_context.verify(form_data.password, wynik.haslo_hash):
+        raise HTTPException(status_code=401, detail="Nieprawidłowy email lub hasło")
+
+    token = stworz_token({
+        "sub": wynik.email,
+        "id": wynik.id,
+        "rola": wynik.rola_nazwa,
+    })
+    
+    return {"access_token": token, "token_type": "bearer"}
 
 
 @app.post("/api/register", status_code=201)
@@ -1340,111 +1371,335 @@ def aktualizuj_uzytkownika(
     db.commit()
     return {"status": "sukces"}
 
+# ======ENDPOINTY REZERWACJA WIZYT=======
 
-@app.put("/api/admin/user/{user_id}", status_code=200)
-def aktualizuj_uzytkownika(
-    user_id: int,
-    request: AktualizacjaUzytkownikaRequest,
-    db: Session = Depends(get_db),
-    payload: dict = Depends(tylko_admin)
+
+# 1. lista specjalizacji
+@app.get("/api/specjalizacje/lista")
+def lista_specjalizacji(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+    wyniki = db.execute(text("SELECT id, nazwa FROM specjalizacje ORDER BY nazwa")).fetchall()
+    return {"specjalizacje": [{"id": w.id, "nazwa": w.nazwa} for w in wyniki]}
+
+
+# 2. lista lekarzy + opcjonalnie filtr po specjalizacji
+@app.get("/api/lekarze/lista")
+def lista_lekarzy(
+    specjalizacja_id: Optional[int] = None, 
+    db: Session = Depends(get_db), 
+    payload: dict = Depends(kazdy_zalogowany)
 ):
-    uzytkownik = db.execute(text("""
-        SELECT u.id, r.nazwa AS rola
-        FROM uzytkownicy u
-        JOIN role r ON u.rola_id = r.id
-        WHERE u.id = :id
-    """), {"id": user_id}).fetchone()
+    zapytanie_sql = """
+        SELECT 
+            l.id, l.imie, l.nazwisko, 
+            array_remove(array_agg(s.nazwa), NULL) AS specjalizacje
+        FROM lekarze l
+        LEFT JOIN lekarz_specjalizacja ls ON l.id = ls.lekarz_id
+        LEFT JOIN specjalizacje s ON ls.specjalizacja_id = s.id
+    """
+    parametry = {}
+    
+    if specjalizacja_id:
+        zapytanie_sql += " WHERE l.id IN (SELECT lekarz_id FROM lekarz_specjalizacja WHERE specjalizacja_id = :spec_id)"
+        parametry["spec_id"] = specjalizacja_id
+        
+    zapytanie_sql += " GROUP BY l.id, l.imie, l.nazwisko ORDER BY l.nazwisko, l.imie"
+    wyniki = db.execute(text(zapytanie_sql), parametry).fetchall()
+    
+    return {
+        "lekarze": [
+            {
+                "id": w.id,
+                "imie": w.imie,
+                "nazwisko": w.nazwisko,
+                "specjalizacje": w.specjalizacje,
+                "placowka": "Przychodnia MediSync"
+            }
+            for w in wyniki
+        ]
+    }
 
-    if not uzytkownik:
-        raise HTTPException(status_code=404, detail="Użytkownik nie istnieje")
 
-    # Zmiana roli
-    if request.rola and request.rola != uzytkownik.rola:
-        nowa_rola = db.execute(
-            text("SELECT id FROM role WHERE nazwa = :nazwa"),
-            {"nazwa": request.rola}
-        ).fetchone()
-        if not nowa_rola:
-            raise HTTPException(status_code=404, detail="Rola nie istnieje")
-        db.execute(text("""
-            UPDATE uzytkownicy SET rola_id = :rola_id WHERE id = :id
-        """), {"rola_id": nowa_rola.id, "id": user_id})
+# 3. szukanie wolnych slotow
+@app.get("/api/wizyty/wolne-sloty")
+def wolne_sloty_lekarza(
+    lekarz_id: int, 
+    data: date, 
+    db: Session = Depends(get_db), 
+    payload: dict = Depends(kazdy_zalogowany)
+):
+    if data < date.today():
+        raise HTTPException(status_code=400, detail="Nie można wyszukiwać terminów w przeszłości.")
 
-    rola = request.rola or uzytkownik.rola
+    # Dodane podzapytanie (subquery) wyciągające cenę z cennika na podstawie specjalizacji lekarza
+    zapytanie = text("""
+        SELECT gp.id, gp.termin_od, gp.termin_do, g.numer AS gabinet_numer,
+               (
+                   SELECT c.cena 
+                   FROM cennik c
+                   JOIN lekarz_specjalizacja ls ON ls.lekarz_id = gp.lekarz_id
+                   WHERE c.specjalizacja_id = ls.specjalizacja_id
+                   AND (c.data_do IS NULL OR c.data_do > NOW())
+                   ORDER BY c.id
+                   LIMIT 1
+               ) AS cena
+        FROM grafiki_pracy gp
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        LEFT JOIN wizyty w ON gp.id = w.grafik_id AND w.status = 'Zaplanowana'
+        WHERE gp.lekarz_id = :lekarz_id AND DATE(gp.termin_od) = :data
+        AND w.id IS NULL AND gp.termin_od > NOW()
+        ORDER BY gp.termin_od
+    """)
+    wyniki = db.execute(zapytanie, {"lekarz_id": lekarz_id, "data": data}).fetchall()
+    
+    return {
+        "sloty": [
+            {
+                "id": w.id,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "gabinet_numer": w.gabinet_numer,
+                "cena": float(w.cena) if w.cena else None  # Zwracamy cenę jako liczbę
+            } for w in wyniki
+        ]
+    }
 
-    # Aktualizacja profilu pacjenta
+# wyszukiwanie pacjentów przy rezerwacji wizyty (dla pracownikow rejestracji, admin tez ma dostep)
+@app.get("/api/pacjenci/szukaj")
+def szukaj_pacjentow(
+    q: str = Query(..., min_length=2),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    wyniki = db.execute(text("""
+        SELECT p.id, p.imie, p.nazwisko, p.pesel, p.telefon
+        FROM pacjenci p
+        WHERE p.imie ILIKE :q
+           OR p.nazwisko ILIKE :q
+           OR p.pesel LIKE :q_exact
+           OR CONCAT(p.imie, ' ', p.nazwisko) ILIKE :q
+        ORDER BY p.nazwisko, p.imie
+        LIMIT 10
+    """), {"q": f"%{q}%", "q_exact": f"{q}%"}).fetchall()
+    
+    return {
+        "pacjenci": [
+            {
+                "id": w.id, 
+                "imie": w.imie, 
+                "nazwisko": w.nazwisko, 
+                "pesel": w.pesel, 
+                "telefon": w.telefon
+            }
+            for w in wyniki
+        ]
+    }
+
+
+# 4. rezerwacja wizyty z FOR UPDATE NOWAIT
+@app.post("/api/wizyty")
+def zarezerwuj_wizyte(
+    request: RezerwacjaRequest, 
+    db: Session = Depends(get_db), 
+    payload: dict = Depends(kazdy_zalogowany)
+):
+    rola = payload.get("rola")
+    
     if rola == "pacjent":
-        pacjent = db.execute(
-            text("SELECT id, adres_id FROM pacjenci WHERE uzytkownik_id = :id"),
-            {"id": user_id}
-        ).fetchone()
+        pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+        if not pacjent:
+            raise HTTPException(404, "Nie znaleziono profilu pacjenta.")
+        pacjent_id = pacjent.id
+    elif rola in ["admin", "rejestracja"]:
+        if not request.pacjent_id:
+            raise HTTPException(422, "Rejestracja musi podać pacjent_id.")
+        pacjent_id = request.pacjent_id
+    else:
+        raise HTTPException(403, "Brak uprawnień do rezerwacji.")
 
-        if pacjent:
-            if request.telefon:
-                db.execute(text("""
-                    UPDATE pacjenci SET telefon = :telefon WHERE uzytkownik_id = :id
-                """), {"telefon": request.telefon, "id": user_id})
+    try:
+        # LOCK - FOR UPDATE NOWAIT
+        slot = db.execute(text("""
+            SELECT gp.id, gp.termin_od, l.imie, l.nazwisko, g.numer as gabinet 
+            FROM grafiki_pracy gp
+            JOIN lekarze l ON gp.lekarz_id = l.id
+            JOIN gabinety g ON gp.gabinet_id = g.id
+            WHERE gp.id = :grafik_id FOR UPDATE NOWAIT
+        """), {"grafik_id": request.grafik_id}).fetchone()
+        
+        if not slot:
+            raise HTTPException(404, "Nie znaleziono slotu.")
 
-            if any([request.miejscowosc, request.kod_pocztowy,
-                    request.ulica, request.nr_domu, request.nr_lokalu]):
-                db.execute(text("""
-                    UPDATE adresy SET
-                        miejscowosc = COALESCE(:miejscowosc, miejscowosc),
-                        kod_pocztowy = COALESCE(:kod_pocztowy, kod_pocztowy),
-                        ulica = COALESCE(:ulica, ulica),
-                        nr_domu = COALESCE(:nr_domu, nr_domu),
-                        nr_lokalu = COALESCE(:nr_lokalu, nr_lokalu)
-                    WHERE id = :adres_id
-                """), {
-                    "miejscowosc": request.miejscowosc,
-                    "kod_pocztowy": request.kod_pocztowy,
-                    "ulica": request.ulica,
-                    "nr_domu": request.nr_domu,
-                    "nr_lokalu": request.nr_lokalu,
-                    "adres_id": pacjent.adres_id,
-                })
+        zajety = db.execute(text("SELECT id FROM wizyty WHERE grafik_id = :grafik_id AND status = 'Zaplanowana'"), {"grafik_id": request.grafik_id}).fetchone()
+        if zajety:
+            raise HTTPException(409, "Ten slot jest już zajęty.")
 
-    # Aktualizacja profilu lekarza
-    elif rola == "lekarz":
-        lekarz = db.execute(
-            text("SELECT id FROM lekarze WHERE uzytkownik_id = :id"),
-            {"id": user_id}
-        ).fetchone()
+        # przekazanie parametru do zapytania o cennik
+        # dobieranie cennika po specjalizacji lekarza
+        cennik = db.execute(text("""
+            SELECT c.id, c.cena FROM cennik c
+            JOIN lekarz_specjalizacja ls ON ls.specjalizacja_id = c.specjalizacja_id
+            WHERE ls.lekarz_id = (
+                SELECT lekarz_id FROM grafiki_pracy WHERE id = :grafik_id
+            )
+            AND (c.data_do IS NULL OR c.data_do > NOW())
+            ORDER BY c.id
+            LIMIT 1
+        """), {"grafik_id": request.grafik_id}).fetchone()
 
-        if lekarz:
-            if request.status_npwz or request.waznosc_oc or request.placowka_id:
-                db.execute(text("""
-                    UPDATE lekarze SET
-                        status_npwz = COALESCE(:status_npwz, status_npwz),
-                        waznosc_oc = COALESCE(:waznosc_oc::date, waznosc_oc),
-                        placowka_id = COALESCE(:placowka_id, placowka_id)
-                    WHERE id = :id
-                """), {
-                    "status_npwz": request.status_npwz,
-                    "waznosc_oc": request.waznosc_oc,
-                    "placowka_id": request.placowka_id,
-                    "id": lekarz.id,
-                })
+        # fallback — specjalizacja bez cennika → Wizyta ogólna
+        if not cennik:
+            cennik = db.execute(text("""
+                SELECT id, cena FROM cennik
+                WHERE specjalizacja_id IS NULL
+                AND (data_do IS NULL OR data_do > NOW())
+                LIMIT 1
+            """)).fetchone()
 
-            if request.specjalizacje_ids is not None:
-                db.execute(text("""
-                    DELETE FROM lekarz_specjalizacja WHERE lekarz_id = :id
-                """), {"id": lekarz.id})
-                for spec_id in request.specjalizacje_ids:
-                    db.execute(text("""
-                        INSERT INTO lekarz_specjalizacja (lekarz_id, specjalizacja_id)
-                        VALUES (:lekarz_id, :spec_id)
-                        ON CONFLICT DO NOTHING
-                    """), {"lekarz_id": lekarz.id, "spec_id": spec_id})
+        if not cennik:
+            raise HTTPException(status_code=500, detail="Błąd systemu: Brak cennika dla tej specjalizacji.")
 
-    # Aktualizacja pracownika
-    elif rola == "pracownik":
-        if request.telefon:
-            db.execute(text("""
-                UPDATE pracownicy SET telefon = :telefon WHERE uzytkownik_id = :id
-            """), {"telefon": request.telefon, "id": user_id})
+        result = db.execute(text("""
+            INSERT INTO wizyty (pacjent_id, grafik_id, cennik_id, status)
+            VALUES (:pacjent_id, :grafik_id, :cennik_id, 'Zaplanowana')
+            RETURNING id
+        """), {
+            "pacjent_id": pacjent_id,
+            "grafik_id": request.grafik_id,
+            "cennik_id": cennik.id
+        })
+        nowa_wizyta_id = result.fetchone()[0]
+        db.commit()
 
-    db.commit()
-    return {"status": "sukces"}
+        return {
+            "status": "sukces",
+            "wizyta_id": nowa_wizyta_id,
+            "termin": slot.termin_od.isoformat(),
+            "lekarz": f"{slot.imie} {slot.nazwisko}",
+            "gabinet": slot.gabinet
+        }
+        
+    except OperationalError as e:
+        db.rollback()
+        if "could not obtain lock" in str(e).lower() or "nowait" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Ten slot jest właśnie rezerwowany przez kogoś innego. Spróbuj ponownie za chwilę.")
+        raise HTTPException(status_code=500, detail=f"Błąd bazy danych: {str(e)}")
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd serwera: {str(e)}")
+
+
+# lista wizyt pacjenta
+@app.get("/api/wizyty/moje")
+def moje_wizyty(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+    if payload.get("rola") != "pacjent":
+        raise HTTPException(403, "Tylko pacjent może przeglądać listę wizyt.")
+        
+    pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+    
+    if not pacjent:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu pacjenta.")
+    
+    zapytanie = text("""
+        SELECT 
+            w.id, w.status, gp.termin_od, gp.termin_do,
+            l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
+            g.numer AS gabinet, c.cena,
+            array_remove(array_agg(s.nazwa), NULL) AS specjalizacje
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        JOIN cennik c ON w.cennik_id = c.id
+        LEFT JOIN lekarz_specjalizacja ls ON l.id = ls.lekarz_id
+        LEFT JOIN specjalizacje s ON ls.specjalizacja_id = s.id
+        WHERE w.pacjent_id = :pacjent_id
+        GROUP BY w.id, w.status, gp.termin_od, gp.termin_do, l.imie, l.nazwisko, g.numer, c.cena
+        ORDER BY gp.termin_od DESC
+    """)
+    wyniki = db.execute(zapytanie, {"pacjent_id": pacjent.id}).fetchall()
+    
+    return {
+        "wizyty": [
+            {
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "lekarz_imie": w.lekarz_imie,
+                "lekarz_nazwisko": w.lekarz_nazwisko,
+                "specjalizacje": w.specjalizacje,
+                "gabinet": w.gabinet,
+                "cena": f"{w.cena:.2f}"
+            } for w in wyniki
+        ]
+    }
+
+
+# odwolywanie wizyty
+@app.delete("/api/wizyty/{wizyta_id}")
+def odwolaj_wizyte(wizyta_id: int, db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+    wizyta = db.execute(text("""
+        SELECT w.id, w.pacjent_id, gp.termin_od, w.status 
+        FROM wizyty w JOIN grafiki_pracy gp ON w.grafik_id = gp.id WHERE w.id = :wizyta_id
+    """), {"wizyta_id": wizyta_id}).fetchone()
+    
+    if not wizyta:
+        raise HTTPException(404, "Nie znaleziono wizyty.")
+        
+    if payload.get("rola") == "pacjent":
+        pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+        if not pacjent or wizyta.pacjent_id != pacjent.id:
+            raise HTTPException(403, "Nie masz uprawnień.")
+        
+        # zabezpieczenie przed bledem stre czasowych - czas wizyty z aktualnym czasem serwera
+        now_time = datetime.now(timezone.utc) if wizyta.termin_od.tzinfo else datetime.now()
+        if wizyta.termin_od <= now_time + timedelta(hours=24):
+            raise HTTPException(409, "Odwołanie możliwe tylko 24h przed terminem.")
+            
+    if wizyta.status == "Odwołana":
+        raise HTTPException(400, "Już odwołana.")
+        
+    try:
+        db.execute(text("UPDATE wizyty SET status = 'Odwołana' WHERE id = :wizyta_id"), {"wizyta_id": wizyta_id})
+        db.commit()
+        return {"status": "sukces", "wiadomosc": "Wizyta została odwołana."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd podczas odwoływania wizyty: {str(e)}")
+
+
+# pojedyczna rezerwacja szczegoly
+@app.get("/api/wizyty/{wizyta_id}")
+def szczegoly_wizyty(wizyta_id: int, db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+    zapytanie = text("""
+        SELECT w.id, w.status, w.pacjent_id, gp.termin_od, gp.termin_do,
+               l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko, g.numer AS gabinet
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        WHERE w.id = :wizyta_id
+    """)
+    wizyta = db.execute(zapytanie, {"wizyta_id": wizyta_id}).fetchone()
+    
+    if not wizyta:
+        raise HTTPException(404, "Nie znaleziono wizyty.")
+        
+    if payload.get("rola") == "pacjent":
+        pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+        if not pacjent or wizyta.pacjent_id != pacjent.id:
+            raise HTTPException(403, "Brak dostępu.")
+
+    return {
+        "id": wizyta.id,
+        "status": wizyta.status,
+        "termin_od": wizyta.termin_od.isoformat(),
+        "termin_do": wizyta.termin_do.isoformat(),
+        "lekarz": f"{wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}",
+        "gabinet": wizyta.gabinet
+    }
 
 
