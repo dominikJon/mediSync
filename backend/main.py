@@ -494,10 +494,27 @@ def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
     if not pwd_context.verify(request.haslo, wynik.haslo_hash):
         raise HTTPException(status_code=401, detail="Nieprawidłowy email lub hasło")
 
+    #do przechowywania imienia i nazwiska w tokenie - niezaleznie od roli
+    imie, nazwisko = None, None
+    if wynik.rola_nazwa == "pacjent":
+        profil=db.execute(text("SELECT imie, nazwisko FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": wynik.id}).fetchone()
+        if profil:
+            imie, nazwisko = profil.imie, profil.nazwisko
+    elif wynik.rola_nazwa == "lekarz":
+        profil=db.execute(text("SELECT imie, nazwisko FROM lekarze WHERE uzytkownik_id = :uid"), {"uid": wynik.id}).fetchone()
+        if profil:
+            imie, nazwisko = profil.imie, profil.nazwisko
+    elif wynik.rola_nazwa in ["admin", "rejestracja"]:
+        profil=db.execute(text("SELECT imie, nazwisko FROM pracownicy WHERE uzytkownik_id = :uid"), {"uid": wynik.id}).fetchone()
+        if profil:
+            imie, nazwisko = profil.imie, profil.nazwisko
+
     token = stworz_token({
         "sub": wynik.email,
         "id": wynik.id,
         "rola": wynik.rola_nazwa,
+        "imie": imie,
+        "nazwisko": nazwisko
     })
 
     return {
@@ -508,6 +525,8 @@ def logowanie(request: LoginRequest, db: Session = Depends(get_db)):
             "email": wynik.email,
             "rola": wynik.rola_nazwa,
             "profil_uzupelniony": wynik.profil_uzupelniony,
+            "imie": imie,
+            "nazwisko": nazwisko
         }
     }
 
