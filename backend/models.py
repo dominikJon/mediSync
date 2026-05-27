@@ -169,7 +169,8 @@ class Wizyta(Base):
     pacjent_id = Column(Integer, ForeignKey("pacjenci.id"), nullable=False)
     grafik_id = Column(Integer, ForeignKey("grafiki_pracy.id"), unique=True, nullable=False)
     cennik_id = Column(Integer, ForeignKey("cennik.id"), nullable=False)
-    status = Column(String(50), default="Zaplanowana") 
+    status = Column(String(50), default="Zaplanowana")
+    specjalizacja_id = Column(Integer, ForeignKey("specjalizacje.id"), nullable=True) 
 
     pacjent = relationship("Pacjent", back_populates="wizyty")
     grafik = relationship("GrafikPracy", back_populates="wizyty")
