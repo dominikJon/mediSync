@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Date, Numeric, Text, Table, Boolean
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import event, DDL
 import datetime
 
 Base = declarative_base()
@@ -236,3 +237,44 @@ class Transakcja(Base):
     status = Column(String(50), default="Oczekująca")  
 
     wizyta = relationship("Wizyta", back_populates="transakcja")
+
+trigger_funkcja = DDL("""
+    CREATE OR REPLACE FUNCTION log_zmiany_wizyt()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF TG_OP = 'DELETE' THEN
+            INSERT INTO logi_audytowe (tabela, operacja, kto_zmienil, stare_dane, nowe_dane)
+            VALUES ('wizyty', TG_OP, OLD.pacjent_id, row_to_json(OLD), NULL);
+            RETURN OLD;
+        ELSIF TG_OP = 'INSERT' THEN
+            INSERT INTO logi_audytowe (tabela, operacja, kto_zmienil, stare_dane, nowe_dane)
+            VALUES ('wizyty', TG_OP, NEW.pacjent_id, NULL, row_to_json(NEW));
+            RETURN NEW;
+        ELSE
+            INSERT INTO logi_audytowe (tabela, operacja, kto_zmienil, stare_dane, nowe_dane)
+            VALUES ('wizyty', TG_OP, NEW.pacjent_id, row_to_json(OLD), row_to_json(NEW));
+            RETURN NEW;
+        END IF;
+    END;
+    $$ LANGUAGE plpgsql;
+    """)
+
+# Trigger
+trigger_wizyty = DDL("""
+    DROP TRIGGER IF EXISTS trigger_wizyty_audit ON wizyty;
+    CREATE TRIGGER trigger_wizyty_audit
+    AFTER INSERT OR UPDATE OR DELETE ON wizyty
+    FOR EACH ROW EXECUTE FUNCTION log_zmiany_wizyt();
+    """)
+
+# Podpięcie — wykona się po CREATE TABLE wizyty
+event.listen(
+    Wizyta.__table__,
+    'after_create',
+    trigger_funkcja
+)
+event.listen(
+    Wizyta.__table__,
+    'after_create',
+    trigger_wizyty
+)
