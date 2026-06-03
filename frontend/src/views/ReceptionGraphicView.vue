@@ -280,7 +280,7 @@ onMounted(() => {
 
 <template>
   <div class="grafik-view">
-    <div v-if="blad" class="error-box-wide">{{ blad }}</div>
+    <div v-if="blad " class="error-box-wide">{{ blad }}</div>
     <div v-if="sukces" class="success-box-wide">{{ sukces }}</div>
 
     <div class="grafik-layout">

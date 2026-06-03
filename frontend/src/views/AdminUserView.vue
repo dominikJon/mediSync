@@ -11,7 +11,7 @@ const specjalizacje = ref<{ id: number; nazwa: string }[]>([])
 const placowki = ref<{ id: number; nazwa: string }[]>([])
 const ladowanie = ref(true)
 const zapisywanie = ref(false)
-const resetowanie = ref(false)
+const resetowanie = ref(false)                                                    
 const blad = ref('')
 const sukces = ref('')
 
