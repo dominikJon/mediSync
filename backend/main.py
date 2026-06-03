@@ -488,6 +488,12 @@ def tylko_admin_lub_rejestracja(token: str = Depends(oauth2_scheme)) -> dict:
 def kazdy_zalogowany(token: str = Depends(oauth2_scheme)) -> dict:
     return weryfikuj_token(token)
 
+def tylko_pacjent(token: str = Depends(oauth2_scheme)) -> dict:
+    payload = weryfikuj_token(token)
+    if payload.get("rola") != "pacjent":
+        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola pacjent")
+    return payload
+
 def pobierz_pacjenta(
     db: Session = Depends(get_db),
     payload: dict = Depends(tylko_pacjent)  # ← nowy helper poniżej
@@ -508,12 +514,6 @@ def pobierz_pacjenta(
     if not pacjent:
         raise HTTPException(status_code=404, detail="Nie znaleziono profilu pacjenta")
     return pacjent
-
-def tylko_pacjent(token: str = Depends(oauth2_scheme)) -> dict:
-    payload = weryfikuj_token(token)
-    if payload.get("rola") != "pacjent":
-        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola pacjent")
-    return payload
    
 
 
