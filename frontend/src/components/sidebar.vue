@@ -6,29 +6,40 @@ import { useAuthStore } from '../stores/auth'
 const router = useRouter()
 const authStore = useAuthStore()
 
-// Menu podstawowe dla wszystkich
 const menuPodstawowe = [
   { name: 'Pulpit', path: '/', icon: '🏠' },
-  { name: 'Harmonogram', path: '/schedule', icon: '📆' },
-  { name: 'EDM / Kartoteka', path: '/records', icon: '📁' },
-  { name: 'Raporty', path: '/reports', icon: '📊' },
 ]
 
-// Menu tylko dla admina
+// Pacjent
+const menuPacjent = [
+  { name: 'Umów wizytę', path: '/schedule', icon: '📆' },
+  { name: 'Moje wizyty', path: '/records', icon: '📁' },
+]
+
+// Lekarz
+const menuLekarz = [
+  { name: 'Moje wizyty', path: '/lekarz/wizyty', icon: '🗓️' },
+]
+
+// Admin
 const menuAdmin = [
   { name: 'Użytkownicy', path: '/admin/users', icon: '👥' },
   { name: 'Dodaj lekarza', path: '/admin/add-doctor', icon: '👨‍⚕️' },
   { name: 'Dodaj pracownika', path: '/admin/add-staff', icon: '👨‍💼' },
   { name: 'Gabinety', path: '/reception/office', icon: '🏥' },
-  { name: 'Grafiki pracy', path: '/reception/graphic', icon: '📅' }
+  { name: 'Grafiki pracy', path: '/reception/graphic', icon: '📅' },
+  { name: 'Raporty', path: '/reports', icon: '📊' },
 ]
 
-// Menu tylko dla rejestracji
+// Rejestracja
 const menuReceptionist = [
   { name: 'Gabinety', path: '/reception/office', icon: '🏥' },
-  { name: 'Grafiki pracy', path: '/reception/graphic', icon: '📅' }
-] 
+  { name: 'Grafiki pracy', path: '/reception/graphic', icon: '📅' },
+  { name: 'Umów wizytę', path: '/schedule', icon: '📆' },
+]
 
+const isPacjent = computed(() => authStore.user?.rola === 'pacjent')
+const isLekarz = computed(() => authStore.user?.rola === 'lekarz')
 const isAdmin = computed(() => authStore.user?.rola === 'admin')
 const isReceptionist = computed(() => authStore.user?.rola === 'rejestracja')
 
@@ -74,6 +85,21 @@ const handleLogout = () => {
         {{ item.name }}
       </RouterLink>
 
+      <!-- Pacjent -->
+      <div v-if="isPacjent">
+        <div class="section-divider"><span>Moje konto</span></div>
+        <RouterLink
+          v-for="item in menuPacjent"
+          :key="item.path"
+          :to="item.path"
+          class="nav-link"
+          active-class="active"
+        >
+          <span class="icon">{{ item.icon }}</span>
+          {{ item.name }}
+        </RouterLink>
+      </div>
+
       <!-- Sekcja rejestracji — widoczna tylko dla roli rejestracja -->
       <div v-if="isReceptionist" class="section-divider">
         <span>Panel Rejestracji</span>
@@ -85,6 +111,23 @@ const handleLogout = () => {
         :key="item.path"
         :to="item.path"
         class="nav-link receptionist-link"
+        active-class="active"
+      >
+        <span class="icon">{{ item.icon }}</span>
+        {{ item.name }}
+      </RouterLink>
+
+      <!-- Sekcja lekarza — widoczna tylko dla roli lekarz -->
+      <div v-if="isLekarz" class="section-divider">
+        <span>Panel Lekarza</span>
+      </div>
+
+      <RouterLink
+        v-if="isLekarz"
+        v-for="item in menuLekarz"
+        :key="item.path"
+        :to="item.path"
+        class="nav-link lekarz-link"
         active-class="active"
       >
         <span class="icon">{{ item.icon }}</span>

@@ -15,6 +15,8 @@ import ForgotPasswordView from '../views/ForgotPasswordView.vue'
 import ResetPasswordView from '../views/ResetPasswordView.vue'
 import ReceptionGraphicView from '../views/ReceptionGraphicView.vue'
 import AdminUserView from '../views/AdminUserView.vue'
+import DoctorVisitsView from '../views/DoctorVisitsView.vue'
+import DoctorVisitView from '../views/DoctorVisitView.vue' //szczegoly danej wizyty dla lekarza
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -108,6 +110,18 @@ const router = createRouter({
       name: 'reception-graphic',
       component: ReceptionGraphicView,
       meta: { requiresAuth: true }
+    },
+    { 
+      path: '/lekarz/wizyty', 
+      name: 'lekarz-wizyty',
+      component: DoctorVisitsView,
+      meta: { requiresAuth: true }
+    },
+    { 
+      path: '/lekarz/wizyta/:id', 
+      name: 'lekarz-wizyta',
+      component: DoctorVisitView,
+      meta: { requiresAuth: true }
     }
   ]
 })
@@ -144,5 +158,4 @@ router.beforeEach((to) => {
     return { name: 'home' }
   }
 })
-
 export default router
