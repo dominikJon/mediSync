@@ -1044,34 +1044,146 @@ def dodaj_gabinet(
 
 #ZMIANA STATUSU GABINETU
 @app.patch("/api/reception/gabinety/{gabinet_id}/status")
-def zmien_status_gabinetu(
+async def zmien_status_gabinetu(
     gabinet_id: int,
     request: ZmienStatusGabinetuRequest,
     db: Session = Depends(get_db),
     payload: dict = Depends(tylko_admin_lub_rejestracja)
 ):
     try:
-        # sprawdzanie czy gabinet istnieje
-        gabinet = db.execute(text("SELECT id FROM gabinety WHERE id = :id"), {"id": gabinet_id}).fetchone()
+        gabinet = db.execute(
+            text("SELECT id, numer, status FROM gabinety WHERE id = :id"),
+            {"id": gabinet_id}
+        ).fetchone()
 
         if not gabinet:
             raise HTTPException(status_code=404, detail="Podany gabinet nie istnieje")
 
-        # aktualizacja statusu gabinetu
         db.execute(text("""
-            UPDATE gabinety
-            SET status = :status
-            WHERE id = :id
-        """), {
-            "status": request.status,
-            "id": gabinet_id,
-        })
+            UPDATE gabinety SET status = :status WHERE id = :id
+        """), {"status": request.status, "id": gabinet_id})
+
+        odwolane = []
+
+        if request.status == 'Niedostępny' and gabinet.status == 'Dostępny':
+            # Pobierz wszystkie zaplanowane wizyty w tym gabinecie
+            wizyty = db.execute(text("""
+                SELECT
+                    w.id,
+                    gp.termin_od,
+                    l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
+                    ul.email AS lekarz_email,
+                    p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+                    up.email AS pacjent_email
+                FROM wizyty w
+                JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+                JOIN lekarze l ON gp.lekarz_id = l.id
+                JOIN uzytkownicy ul ON l.uzytkownik_id = ul.id
+                JOIN pacjenci p ON w.pacjent_id = p.id
+                JOIN uzytkownicy up ON p.uzytkownik_id = up.id
+                WHERE gp.gabinet_id = :gabinet_id
+                AND gp.termin_od > NOW()
+                AND w.status = 'Zaplanowana'
+            """), {"gabinet_id": gabinet_id}).fetchall()
+
+            # Anuluj wizyty
+            for w in wizyty:
+                db.execute(
+                    text("UPDATE wizyty SET status = 'Odwołana' WHERE id = :id"),
+                    {"id": w.id}
+                )
+                odwolane.append(w)
 
         db.commit()
 
+        # Pobierz recepcjonistów
+        recepcjonisci = db.execute(text("""
+            SELECT u.email FROM uzytkownicy u
+            JOIN role r ON u.rola_id = r.id
+            WHERE r.nazwa = 'rejestracja'
+        """)).fetchall()
+        emaile_recepcji = [r.email for r in recepcjonisci]
+
+        # Wyślij emaile dla każdej odwołanej wizyty
+        for w in odwolane:
+            termin = w.termin_od.strftime("%d.%m.%Y o %H:%M")
+
+            wspolna_tabela = f"""
+            <table style="border-collapse: collapse; margin: 16px 0;">
+                <tr>
+                    <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+                    <td style="padding: 8px 0;">{w.pacjent_imie} {w.pacjent_nazwisko}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+                    <td style="padding: 8px 0;">dr {w.lekarz_imie} {w.lekarz_nazwisko}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                    <td style="padding: 8px 0;"><strong>{termin}</strong></td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                    <td style="padding: 8px 0;">{gabinet.numer}</td>
+                </tr>
+            </table>
+            """
+
+            # Email do pacjenta
+            await fastmail.send_message(MessageSchema(
+                subject="Odwołanie wizyty — MediSync",
+                recipients=[w.pacjent_email],
+                body=f"""
+                <h2>Odwołanie wizyty — MediSync</h2>
+                <p>Drogi/a {w.pacjent_imie} {w.pacjent_nazwisko},</p>
+                <p>Twoja wizyta została odwołana z powodu
+                <strong>niedostępności gabinetu {gabinet.numer}</strong>.</p>
+                {wspolna_tabela}
+                <p>Przepraszamy za utrudnienia.</p>
+                <a href="http://localhost:5173/schedule" style="
+                    display: inline-block; padding: 12px 24px;
+                    background-color: #3b82f6; color: white;
+                    text-decoration: none; border-radius: 8px; font-weight: bold;
+                ">Zarezerwuj nowy termin</a>
+                <br><br>
+                <p>Zespół MediSync</p>
+                """,
+                subtype="html"
+            ))
+
+            # Email do lekarza
+            await fastmail.send_message(MessageSchema(
+                subject="Odwołanie wizyty — MediSync",
+                recipients=[w.lekarz_email],
+                body=f"""
+                <h2>Odwołanie wizyty — MediSync</h2>
+                <p>Wizyta została odwołana z powodu
+                <strong>niedostępności gabinetu {gabinet.numer}</strong>.</p>
+                {wspolna_tabela}
+                <p>Zespół MediSync</p>
+                """,
+                subtype="html"
+            ))
+
+            # Email do recepcji
+            if emaile_recepcji:
+                await fastmail.send_message(MessageSchema(
+                    subject="Odwołanie wizyty — gabinet niedostępny — MediSync",
+                    recipients=emaile_recepcji,
+                    body=f"""
+                    <h2>Automatyczne odwołanie wizyty — MediSync</h2>
+                    <p>Gabinet <strong>{gabinet.numer}</strong> został oznaczony
+                    jako niedostępny. Poniższa wizyta została automatycznie odwołana:</p>
+                    {wspolna_tabela}
+                    <p>Zespół MediSync</p>
+                    """,
+                    subtype="html"
+                ))
+
         return {
             "status": "sukces",
-            "wiadomosc": f"Status gabinetu {gabinet_id} został zmieniony na {request.status}",
+            "wiadomosc": f"Status gabinetu {gabinet_id} zmieniony na {request.status}",
+            "odwolane_wizyty": len(odwolane)
         }
 
     except HTTPException:
@@ -1079,7 +1191,7 @@ def zmien_status_gabinetu(
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Błąd podczas zmiany statusu gabinetu: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Błąd: {str(e)}")
 
 # ======== ENDPOINTY GRAFIK ========
 
@@ -1725,35 +1837,184 @@ def moje_wizyty(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zal
 
 # odwolywanie wizyty
 @app.delete("/api/wizyty/{wizyta_id}")
-def odwolaj_wizyte(wizyta_id: int, db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+async def odwolaj_wizyte(
+    wizyta_id: int,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(kazdy_zalogowany)
+):
     wizyta = db.execute(text("""
-        SELECT w.id, w.pacjent_id, gp.termin_od, w.status 
-        FROM wizyty w JOIN grafiki_pracy gp ON w.grafik_id = gp.id WHERE w.id = :wizyta_id
+        SELECT 
+            w.id, w.pacjent_id, w.status,
+            gp.termin_od, gp.termin_do,
+            gp.gabinet_id,
+            l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
+            ul.email AS lekarz_email,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+            up.email AS pacjent_email,
+            g.numer AS gabinet_numer
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN uzytkownicy ul ON l.uzytkownik_id = ul.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN uzytkownicy up ON p.uzytkownik_id = up.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        WHERE w.id = :wizyta_id
     """), {"wizyta_id": wizyta_id}).fetchone()
-    
+
     if not wizyta:
         raise HTTPException(404, "Nie znaleziono wizyty.")
-        
-    if payload.get("rola") == "pacjent":
-        pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+
+    if wizyta.status == "Odwołana":
+        raise HTTPException(400, "Wizyta jest już odwołana.")
+
+    rola = payload.get("rola")
+
+    # Sprawdzenie uprawnień i ustalenie kto odwołuje
+    if rola == "pacjent":
+        pacjent = db.execute(
+            text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"),
+            {"uid": payload.get("id")}
+        ).fetchone()
         if not pacjent or wizyta.pacjent_id != pacjent.id:
-            raise HTTPException(403, "Nie masz uprawnień.")
-        
-        # zabezpieczenie przed bledem stre czasowych - czas wizyty z aktualnym czasem serwera
+            raise HTTPException(403, "Nie masz uprawnień do odwołania tej wizyty.")
+
         now_time = datetime.now(timezone.utc) if wizyta.termin_od.tzinfo else datetime.now()
         if wizyta.termin_od <= now_time + timedelta(hours=24):
             raise HTTPException(409, "Odwołanie możliwe tylko 24h przed terminem.")
-            
-    if wizyta.status == "Odwołana":
-        raise HTTPException(400, "Już odwołana.")
-        
+
+    elif rola not in ["admin", "rejestracja"]:
+        raise HTTPException(403, "Brak uprawnień.")
+
+    # Anulowanie wizyty
     try:
-        db.execute(text("UPDATE wizyty SET status = 'Odwołana' WHERE id = :wizyta_id"), {"wizyta_id": wizyta_id})
+        db.execute(
+            text("UPDATE wizyty SET status = 'Odwołana' WHERE id = :id"),
+            {"id": wizyta_id}
+        )
         db.commit()
-        return {"status": "sukces", "wiadomosc": "Wizyta została odwołana."}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Błąd podczas odwoływania wizyty: {str(e)}")
+        raise HTTPException(500, f"Błąd podczas odwoływania wizyty: {str(e)}")
+
+    termin = wizyta.termin_od.strftime("%d.%m.%Y o %H:%M")
+
+    # Pobierz email recepcjonistów
+    recepcjonisci = db.execute(text("""
+        SELECT u.email FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE r.nazwa = 'rejestracja'
+    """)).fetchall()
+    emaile_recepcji = [r.email for r in recepcjonisci]
+
+    def tresc_dla_lekarza(kto_odwolal: str) -> str:
+        return f"""
+        <h2>Odwołanie wizyty — MediSync</h2>
+        <p>Wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
+        <table style="border-collapse: collapse; margin: 16px 0;">
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+                <td style="padding: 8px 0;">{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
+            </tr>
+        </table>
+        <p>Zespół MediSync</p>
+        """
+
+    def tresc_dla_pacjenta(kto_odwolal: str) -> str:
+        return f"""
+        <h2>Odwołanie wizyty — MediSync</h2>
+        <p>Drogi/a {wizyta.pacjent_imie} {wizyta.pacjent_nazwisko},</p>
+        <p>Twoja wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
+        <table style="border-collapse: collapse; margin: 16px 0;">
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+                <td style="padding: 8px 0;">dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
+            </tr>
+        </table>
+        <p>Zapraszamy do rezerwacji nowego terminu.</p>
+        <a href="http://localhost:5173/schedule" style="
+            display: inline-block; padding: 12px 24px;
+            background-color: #3b82f6; color: white;
+            text-decoration: none; border-radius: 8px; font-weight: bold;
+        ">Zarezerwuj nowy termin</a>
+        <br><br>
+        <p>Zespół MediSync</p>
+        """
+
+    def tresc_dla_recepcji(kto_odwolal: str) -> str:
+        return f"""
+        <h2>Odwołanie wizyty — MediSync</h2>
+        <p>Wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
+        <table style="border-collapse: collapse; margin: 16px 0;">
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+                <td style="padding: 8px 0;">{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+                <td style="padding: 8px 0;">dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
+            </tr>
+        </table>
+        <p>Zespół MediSync</p>
+        """
+
+    # Wysyłka emaili w zależności od roli
+    if rola == "pacjent":
+        # Pacjent odwołuje → email do lekarza i recepcji
+        await fastmail.send_message(MessageSchema(
+            subject="Odwołanie wizyty — MediSync",
+            recipients=[wizyta.lekarz_email],
+            body=tresc_dla_lekarza("pacjenta"),
+            subtype="html"
+        ))
+        if emaile_recepcji:
+            await fastmail.send_message(MessageSchema(
+                subject="Odwołanie wizyty — MediSync",
+                recipients=emaile_recepcji,
+                body=tresc_dla_recepcji("pacjenta"),
+                subtype="html"
+            ))
+
+    elif rola in ["admin", "rejestracja"]:
+        # Recepcja/admin odwołuje → email do pacjenta i lekarza
+        await fastmail.send_message(MessageSchema(
+            subject="Odwołanie wizyty — MediSync",
+            recipients=[wizyta.pacjent_email],
+            body=tresc_dla_pacjenta("recepcji"),
+            subtype="html"
+        ))
+        await fastmail.send_message(MessageSchema(
+            subject="Odwołanie wizyty — MediSync",
+            recipients=[wizyta.lekarz_email],
+            body=tresc_dla_lekarza("recepcji"),
+            subtype="html"
+        ))
+
+    return {"status": "sukces", "wiadomosc": "Wizyta została odwołana."}
 
 
 # pojedyczna rezerwacja szczegoly

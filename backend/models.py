@@ -225,9 +225,11 @@ class Cennik(Base):
     cena = Column(Numeric(10, 2), nullable=False)
     data_od = Column(DateTime, nullable=False) 
     data_do = Column(DateTime, nullable=True) 
+    specjalizacja_id = Column(Integer, ForeignKey("specjalizacje.id"), nullable=True)
 
     wizyty = relationship("Wizyta", back_populates="cennik")
-
+    specjalizacja = relationship("Specjalizacja")
+    
 class Transakcja(Base):
     __tablename__ = "transakcje"
     id = Column(Integer, primary_key=True, index=True)
