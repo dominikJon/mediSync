@@ -12,9 +12,13 @@ from typing import Optional, Literal
 from fastapi import Query
 import os
 import re
+import json
 from database import get_db
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 import secrets
+import base64
+from fastapi import Request
+from fastapi.responses import Response
 
 # Konfiguracja
 SECRET_KEY = os.getenv("SECRET_KEY")
@@ -27,7 +31,43 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/swagger-token")
 
-app = FastAPI()
+# Swagger Basic Auth
+SWAGGER_USERNAME = os.getenv("SWAGGER_USERNAME", "admin")
+SWAGGER_PASSWORD = os.getenv("SWAGGER_PASSWORD", "MediSync2026!")
+ENV = os.getenv("ENV", "development")
+
+app = FastAPI(
+    docs_url="/docs" if ENV == "development" else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if ENV == "development" else None,
+)
+
+@app.middleware("http")
+async def swagger_basic_auth(request: Request, call_next):
+    if request.url.path in ["/docs", "/openapi.json"]:
+        auth = request.headers.get("Authorization")
+        if not auth or not auth.startswith("Basic "):
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": "Basic realm='MediSync API'"},
+                content="Unauthorized",
+            )
+        try:
+            decoded = base64.b64decode(auth.split(" ")[1]).decode()
+            username, password = decoded.split(":", 1)
+            ok = (
+                secrets.compare_digest(username, SWAGGER_USERNAME) and
+                secrets.compare_digest(password, SWAGGER_PASSWORD)
+            )
+            if not ok:
+                raise ValueError
+        except Exception:
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": "Basic realm='MediSync API'"},
+                content="Unauthorized",
+            )
+    return await call_next(request)
 
 # CORS
 app.add_middleware(
@@ -150,8 +190,6 @@ class NoweHasloRequest(BaseModel):
         if not REGEX_ZNAK_SPECJALNY.search(v):
             raise ValueError("Hasło musi zawierać znak specjalny")
         return v
-
-
 
 
 class KartotekaRequest(BaseModel):
@@ -450,8 +488,10 @@ class AktualizacjaUzytkownikaRequest(BaseModel):
     status_npwz: Optional[str] = None
     waznosc_oc: Optional[str] = None
 
-
-
+#dla lekarza
+class DokumentacjaRequest(BaseModel):
+    kod_icd10: Optional[str] = None
+    wywiad_lekarski: Optional[dict] = None  # JSONB
 
 
 # ======== HELPERY ========
@@ -477,6 +517,12 @@ def tylko_admin(token: str = Depends(oauth2_scheme)) -> dict:
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola admin")
     return payload
 
+def tylko_lekarz(token: str = Depends(oauth2_scheme)) -> dict:
+    payload = weryfikuj_token(token)
+    if payload.get("rola") != "lekarz":
+        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola lekarz")
+    return payload
+
 # helper do harmonogramu, gabinetu itd. tylko dla admina i pracownika rejestracji
 def tylko_admin_lub_rejestracja(token: str = Depends(oauth2_scheme)) -> dict:
     payload = weryfikuj_token(token)
@@ -493,29 +539,6 @@ def tylko_pacjent(token: str = Depends(oauth2_scheme)) -> dict:
     if payload.get("rola") != "pacjent":
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola pacjent")
     return payload
-
-def pobierz_pacjenta(
-    db: Session = Depends(get_db),
-    payload: dict = Depends(tylko_pacjent)  # ← nowy helper poniżej
-):
-    pacjent = db.execute(text("""..."""), {"uid": payload["id"]}).fetchone()
-    if not pacjent:
-        raise HTTPException(status_code=404, detail="Nie znaleziono profilu pacjenta")
-    return pacjent
-
-    pacjent = db.execute(text("""
-        SELECT p.id, p.imie, p.nazwisko, p.pesel, p.telefon,
-               a.miejscowosc, a.kod_pocztowy, a.ulica, a.nr_domu, a.nr_lokalu
-        FROM pacjenci p
-        LEFT JOIN adresy a ON p.adres_id = a.id
-        WHERE p.uzytkownik_id = :uid
-    """), {"uid": payload["id"]}).fetchone()
-
-    if not pacjent:
-        raise HTTPException(status_code=404, detail="Nie znaleziono profilu pacjenta")
-    return pacjent
-   
-
 
 
 # ======== ENDPOINTY ========
@@ -1438,7 +1461,7 @@ def aktualizuj_uzytkownika(
 
 # 1. lista specjalizacji
 @app.get("/api/specjalizacje/lista")
-def lista_specjalizacji_publiczna(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+def lista_specjalizacji(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
     wyniki = db.execute(text("SELECT id, nazwa FROM specjalizacje ORDER BY nazwa")).fetchall()
     return {"specjalizacje": [{"id": w.id, "nazwa": w.nazwa} for w in wyniki]}
 
@@ -1764,6 +1787,192 @@ def szczegoly_wizyty(wizyta_id: int, db: Session = Depends(get_db), payload: dic
         "gabinet": wizyta.gabinet
     }
 
+
+# ======ENDPOINTY PANEL LEKARZA=======
+
+#pobieranie wizyt na dany dzien dla lekarza
+@app.get("/api/lekarz/wizyty")
+def wizyty_lekarza(
+    data: date = Query(default=None),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)  
+):
+    if data is None:
+        data = date.today()
+
+    lekarz = db.execute(text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+    if not lekarz:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza.")
+
+    # Trigger: auto-zamknięcie przeterminowanych wizyt (>24h bez EDM)
+    db.execute(text("""
+        UPDATE wizyty SET status = 'Nieobecność'
+        WHERE status = 'Zaplanowana'
+        AND grafik_id IN (
+            SELECT id FROM grafiki_pracy
+            WHERE termin_od < NOW() - INTERVAL '24 hours'
+        )
+    """))
+    db.commit()
+
+    zapytanie = text("""
+        SELECT 
+            w.id, w.status, gp.termin_od, gp.termin_do,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+            g.numer AS gabinet,
+            CASE WHEN dm.id IS NOT NULL THEN true ELSE false END AS ma_dokumentacje
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        LEFT JOIN dokumentacja_medyczna dm ON dm.wizyta_id = w.id
+        WHERE gp.lekarz_id = :lekarz_id
+        AND DATE(gp.termin_od) = :data
+        ORDER BY gp.termin_od
+    """)
+    wyniki = db.execute(zapytanie, {"lekarz_id": lekarz.id, "data": data}).fetchall()
+
+    return {
+        "wizyty": [
+            {
+                "id": r.id,
+                "status": r.status,
+                "termin_od": r.termin_od.isoformat(),
+                "termin_do": r.termin_do.isoformat(),
+                "pacjent_imie": r.pacjent_imie,
+                "pacjent_nazwisko": r.pacjent_nazwisko,
+                "gabinet": r.gabinet,
+                "ma_dokumentacje": r.ma_dokumentacje
+            } for r in wyniki
+        ]
+    }
+
+#szczegoly konkretnej wizyty dla lekarza
+# 1.2 Szczegóły konkretnej wizyty + EDM
+@app.get("/api/lekarz/wizyty/{wizyta_id}")
+def szczegoly_wizyty_lekarz(
+    wizyta_id: int,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+
+    zapytanie = text("""
+        SELECT 
+            w.id, w.status, gp.termin_od, gp.termin_do, g.numer AS gabinet, gp.lekarz_id,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko, 
+            p.pesel AS pacjent_pesel, p.telefon AS pacjent_telefon,
+            CONCAT(COALESCE(a.ulica || ' ', ''), a.nr_domu, COALESCE('/' || a.nr_lokalu, ''), ', ', a.kod_pocztowy, ' ', a.miejscowosc) AS pacjent_adres,
+            dm.kod_icd10, dm.wywiad_lekarski
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        LEFT JOIN adresy a ON p.adres_id = a.id
+        LEFT JOIN dokumentacja_medyczna dm ON dm.wizyta_id = w.id
+        WHERE w.id = :wizyta_id
+    """)
+    wynik = db.execute(zapytanie, {"wizyta_id": wizyta_id}).fetchone()
+
+    if not wynik:
+        raise HTTPException(status_code=404, detail="Wizyta nie istnieje")
+    
+    if wynik.lekarz_id != lekarz.id:
+        raise HTTPException(status_code=403, detail="Brak dostępu do wizyty innego lekarza")
+
+    return {
+        "id": wynik.id,
+        "status": wynik.status,
+        "termin_od": wynik.termin_od.isoformat(),
+        "termin_do": wynik.termin_do.isoformat(),
+        "gabinet": wynik.gabinet,
+        "pacjent": {
+            "imie": wynik.pacjent_imie,
+            "nazwisko": wynik.pacjent_nazwisko,
+            "pesel": wynik.pacjent_pesel,
+            "telefon": wynik.pacjent_telefon,
+            "adres": wynik.pacjent_adres
+        },
+        "dokumentacja": {
+            "kod_icd10": wynik.kod_icd10,
+            "wywiad_lekarski": wynik.wywiad_lekarski
+        } if (wynik.kod_icd10 or wynik.wywiad_lekarski) else None
+    }
+
+# wyszukiwarka z slownika icd10
+@app.get("/api/slownik/icd10")
+def szukaj_icd10(
+    szukaj: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    #kod oraz nazwa
+    wyniki = db.execute(text("""
+        SELECT kod, nazwa 
+        FROM slownik_icd10
+        WHERE kod ILIKE :q OR nazwa ILIKE :q
+        ORDER BY
+        CASE WHEN kod ILIKE :q_start THEN 1 ELSE 2 END, kod ASC
+        LIMIT 30;
+    """), {"q": f"%{szukaj}%", "q_start": f"{szukaj}%"}).fetchall()
+    
+    return [{"kod": r.kod, "nazwa": r.nazwa} for r in wyniki]
+
+#EDM zapisywanie i zakonczenie wizyty pacjenta
+@app.post("/api/lekarz/wizyty/{wizyta_id}/dokumentacja")
+def zapisz_dokumentacje(
+    wizyta_id: int,
+    request: DokumentacjaRequest,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
+    
+    wizyta = db.execute(text("""
+        SELECT w.id, w.status, gp.lekarz_id 
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        WHERE w.id = :wizyta_id
+    """), {"wizyta_id": wizyta_id}).fetchone()
+
+    if not wizyta:
+        raise HTTPException(status_code=404, detail="Wizyta nie istnieje")
+    
+    if wizyta.lekarz_id != lekarz.id:
+        raise HTTPException(status_code=403, detail="Odmowa dostępu do wizyty innego lekarza")
+        
+    if wizyta.status != "Zaplanowana":
+        raise HTTPException(status_code=400, detail="Nie można edytować dokumentacji — wizyta jest zakończona, odwołana lub przeterminowana.")
+
+    try:
+        # Konwersja wywiadu na JSON stringa (JSONB w bazie)
+        wywiad_json = json.dumps(request.wywiad_lekarski) if request.wywiad_lekarski else None
+        
+        doc = db.execute(text("SELECT id FROM dokumentacja_medyczna WHERE wizyta_id = :w_id"), {"w_id": wizyta_id}).fetchone()
+        
+        if doc:
+            db.execute(text("""
+                UPDATE dokumentacja_medyczna 
+                SET kod_icd10 = :icd10, wywiad_lekarski = :wywiad 
+                WHERE wizyta_id = :w_id
+            """), {"icd10": request.kod_icd10, "wywiad": wywiad_json, "w_id": wizyta_id})
+        else:
+            db.execute(text("""
+                INSERT INTO dokumentacja_medyczna (wizyta_id, kod_icd10, wywiad_lekarski) 
+                VALUES (:w_id, :icd10, :wywiad)
+            """), {"w_id": wizyta_id, "icd10": request.kod_icd10, "wywiad": wywiad_json})
+        
+        # Zamykamy wizytę
+        db.execute(text("UPDATE wizyty SET status = 'Zakończona' WHERE id = :w_id"), {"w_id": wizyta_id})
+        
+        db.commit()
+        return {"message": "Dokumentacja medyczna została pomyślnie zapisana, a wizyta zakończona."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd zapisu dokumentacji: {str(e)}")
+
+# ======ENDPOINTY PANEL PACJENTA=======
+
 @app.get("/api/pacjent/profil")
 def profil_pacjenta(
     db: Session = Depends(get_db),
@@ -1780,7 +1989,6 @@ def profil_pacjenta(
     if not pacjent:
         raise HTTPException(status_code=404, detail="Nie znaleziono profilu pacjenta")
 
-    # Najbliższa wizyta
     najblizsa = db.execute(text("""
         SELECT w.id, w.status,
                g.termin_od, g.termin_do,
@@ -1802,7 +2010,6 @@ def profil_pacjenta(
         LIMIT 1
     """), {"pid": pacjent.id}).fetchone()
 
-    # Ostatnie 3 wizyty
     ostatnie = db.execute(text("""
         SELECT w.id, w.status,
                g.termin_od, g.termin_do,
@@ -1826,7 +2033,7 @@ def profil_pacjenta(
             "id": w.id,
             "status": w.status,
             "termin_od": str(w.termin_od),
-            "termin_do": str(w.termin_do),
+            "termin_do": str(w.termin_od),
             "lekarz": f"{w.lekarz_imie} {w.lekarz_nazwisko}",
             "specjalizacja": w.specjalizacja,
             "nazwa_uslugi": w.nazwa_uslugi,
@@ -1851,6 +2058,7 @@ def profil_pacjenta(
         "najblizsa_wizyta": {**wizyta_dict(najblizsa), "gabinet": najblizsa.gabinet} if najblizsa else None,
         "ostatnie_wizyty": [wizyta_dict(w) for w in ostatnie],
     }
+
 
 @app.get("/api/pacjent/historia")
 def historia_wizyt(
