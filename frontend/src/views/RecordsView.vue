@@ -1,133 +1,3 @@
-<template>
-  <div class="page">
-    <h1 class="page-title">Moje wizyty</h1>
-
-    <div v-if="blad" class="error-box">
-      {{ blad }}
-      <button @click="blad = ''" class="close-btn">✕</button>
-    </div>
-    <div v-if="sukces" class="sukces-box">
-      {{ sukces }}
-      <button @click="sukces = ''" class="close-btn">✕</button>
-    </div>
-  </div>
-
-    <!-- Filtry statusu -->
-    <div class="filtry">
-      <button
-        v-for="s in STATUSY"
-        :key="s.value"
-        :class="['filtr-btn', { aktywny: filtr === s.value }]"
-        @click="zmienFiltr(s.value)"
-      >
-        {{ s.label }}
-      </button>
-    </div>
-
-    <div v-if="ladowanie" class="loading-state">
-      Ładowanie historii wizyt...
-    </div>
-
-    <div v-else-if="wizyty.length === 0" class="empty-state">
-      <span class="empty-icon">📂</span>
-      <p>Brak wizyt{{ filtr ? ` o statusie "${filtr}"` : '' }}.</p>
-      <RouterLink v-if="!filtr" to="/schedule" class="link-primary">
-        Zarezerwuj pierwszą wizytę →
-      </RouterLink>
-    </div>
-
-    <div v-else class="wizyty-lista">
-      <div v-for="w in wizyty" :key="w.id" class="wizyta-card">
-
-        <!-- Nagłówek wizyty -->
-        <div class="wizyta-header">
-          <div class="wizyta-data-blok">
-            <span class="wizyta-data">{{ formatData(w.termin_od) }}</span>
-            <span class="wizyta-godzina">
-              {{ formatGodzina(w.termin_od) }} – {{ formatGodzina(w.termin_do) }}
-            </span>
-          </div>
-
-          <div class="wizyta-info">
-            <span class="wizyta-lekarz">
-              dr {{ w.lekarz_imie ?? w.lekarz }} {{ w.lekarz_nazwisko ?? '' }}
-            </span>
-            <span class="wizyta-spec">
-              {{ Array.isArray(w.specjalizacje) ? w.specjalizacje.join(', ') : w.specjalizacja }}
-              · Gabinet {{ w.gabinet }}
-            </span>
-            <span class="wizyta-usluga">
-              {{ w.nazwa_uslugi ?? '' }} · {{ w.cena }} zł
-            </span>
-          </div>
-
-          <div class="wizyta-prawa">
-            <span :class="['badge', statusKolor(w.status)]">{{ w.status }}</span>
-
-            <!-- Przycisk odwołania -->
-            <div v-if="moznaOdwolac(w)" class="akcja-odwolaj">
-              <div v-if="wizytaDoOdwolania === w.id" class="confirm-actions">
-                <span class="confirm-text">Na pewno?</span>
-                <button @click="odwolaj(w.id)" class="btn-danger btn-sm">Tak</button>
-                <button @click="wizytaDoOdwolania = null" class="btn-secondary btn-sm">Nie</button>
-              </div>
-              <button
-                v-else
-                @click="wizytaDoOdwolania = w.id"
-                class="btn-danger btn-outline"
-              >
-                Odwołaj
-              </button>
-            </div>
-
-            <!-- Przycisk rozwinięcia dokumentacji -->
-            <button
-              v-if="w.dokumentacja || w.status === 'Zakończona'"
-              class="btn-edm"
-              @click="toggleDokumentacja(w.id)"
-            >
-              {{ rozwinietaWizyta === w.id ? '▲ Ukryj' : '▼ Dokumentacja' }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Dokumentacja EDM -->
-        <div v-if="rozwinietaWizyta === w.id" class="wizyta-dokumentacja">
-          <div v-if="w.dokumentacja" class="edm">
-            <div class="edm-title">Dokumentacja medyczna</div>
-
-            <div v-if="w.dokumentacja.kod_icd10" class="edm-row">
-              <span class="edm-label">Rozpoznanie ICD-10</span>
-              <span class="edm-value">
-                <strong>{{ w.dokumentacja.kod_icd10 }}</strong>
-                — {{ w.dokumentacja.icd10_nazwa }}
-              </span>
-            </div>
-
-            <div v-if="w.dokumentacja.wywiad_lekarski" class="edm-wywiad">
-              <span class="edm-label">Wywiad lekarski</span>
-              <div class="edm-pola">
-              <div
-                v-for="(wartosc, klucz) in w.dokumentacja.wywiad_lekarski"
-                :key="klucz"
-                class="edm-pole"
-              >
-                <span class="edm-pole-klucz">{{ formatujKlucz(String(klucz)) }}</span>
-                <span class="edm-pole-wartosc">{{ wartosc }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-else class="edm-brak">
-            Dokumentacja nie została jeszcze uzupełniona.
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
@@ -272,6 +142,136 @@ onMounted(() => {
   fetchWizyty()
 })
 </script>
+
+<template>
+  <div class="page">
+    <h1 class="page-title">Moje wizyty</h1>
+
+    <div v-if="blad" class="error-box">
+      {{ blad }}
+      <button @click="blad = ''" class="close-btn">✕</button>
+    </div>
+    <div v-if="sukces" class="sukces-box">
+      {{ sukces }}
+      <button @click="sukces = ''" class="close-btn">✕</button>
+    </div>
+  </div>
+
+    <!-- Filtry statusu -->
+    <div class="filtry">
+      <button
+        v-for="s in STATUSY"
+        :key="s.value"
+        :class="['filtr-btn', { aktywny: filtr === s.value }]"
+        @click="zmienFiltr(s.value)"
+      >
+        {{ s.label }}
+      </button>
+    </div>
+
+    <div v-if="ladowanie" class="loading-state">
+      Ładowanie historii wizyt...
+    </div>
+
+    <div v-else-if="wizyty.length === 0" class="empty-state">
+      <span class="empty-icon">📂</span>
+      <p>Brak wizyt{{ filtr ? ` o statusie "${filtr}"` : '' }}.</p>
+      <RouterLink v-if="!filtr" to="/schedule" class="link-primary">
+        Zarezerwuj pierwszą wizytę →
+      </RouterLink>
+    </div>
+
+    <div v-else class="wizyty-lista">
+      <div v-for="w in wizyty" :key="w.id" class="wizyta-card">
+
+        <!-- Nagłówek wizyty -->
+        <div class="wizyta-header">
+          <div class="wizyta-data-blok">
+            <span class="wizyta-data">{{ formatData(w.termin_od) }}</span>
+            <span class="wizyta-godzina">
+              {{ formatGodzina(w.termin_od) }} – {{ formatGodzina(w.termin_do) }}
+            </span>
+          </div>
+
+          <div class="wizyta-info">
+            <span class="wizyta-lekarz">
+              dr {{ w.lekarz_imie ?? w.lekarz }} {{ w.lekarz_nazwisko ?? '' }}
+            </span>
+            <span class="wizyta-spec">
+              {{ Array.isArray(w.specjalizacje) ? w.specjalizacje.join(', ') : w.specjalizacja }}
+              · Gabinet {{ w.gabinet }}
+            </span>
+            <span class="wizyta-usluga">
+              {{ w.nazwa_uslugi ?? '' }} · {{ w.cena }} zł
+            </span>
+          </div>
+
+          <div class="wizyta-prawa">
+            <span :class="['badge', statusKolor(w.status)]">{{ w.status }}</span>
+
+            <!-- Przycisk odwołania -->
+            <div v-if="moznaOdwolac(w)" class="akcja-odwolaj">
+              <div v-if="wizytaDoOdwolania === w.id" class="confirm-actions">
+                <span class="confirm-text">Na pewno?</span>
+                <button @click="odwolaj(w.id)" class="btn-danger btn-sm">Tak</button>
+                <button @click="wizytaDoOdwolania = null" class="btn-secondary btn-sm">Nie</button>
+              </div>
+              <button
+                v-else
+                @click="wizytaDoOdwolania = w.id"
+                class="btn-danger btn-outline"
+              >
+                Odwołaj
+              </button>
+            </div>
+
+            <!-- Przycisk rozwinięcia dokumentacji -->
+            <button
+              v-if="w.dokumentacja || w.status === 'Zakończona'"
+              class="btn-edm"
+              @click="toggleDokumentacja(w.id)"
+            >
+              {{ rozwinietaWizyta === w.id ? '▲ Ukryj' : '▼ Dokumentacja' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Dokumentacja EDM -->
+        <div v-if="rozwinietaWizyta === w.id" class="wizyta-dokumentacja">
+          <div v-if="w.dokumentacja" class="edm">
+            <div class="edm-title">Dokumentacja medyczna</div>
+
+            <div v-if="w.dokumentacja.kod_icd10" class="edm-row">
+              <span class="edm-label">Rozpoznanie ICD-10</span>
+              <span class="edm-value">
+                <strong>{{ w.dokumentacja.kod_icd10 }}</strong>
+                — {{ w.dokumentacja.icd10_nazwa }}
+              </span>
+            </div>
+
+            <div v-if="w.dokumentacja.wywiad_lekarski" class="edm-wywiad">
+              <span class="edm-label">Wywiad lekarski</span>
+              <div class="edm-pola">
+              <div
+                v-for="(wartosc, klucz) in w.dokumentacja.wywiad_lekarski"
+                :key="klucz"
+                class="edm-pole"
+              >
+                <span class="edm-pole-klucz">{{ formatujKlucz(String(klucz)) }}</span>
+                <span class="edm-pole-wartosc">{{ wartosc }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="edm-brak">
+            Dokumentacja nie została jeszcze uzupełniona.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</template>
 
 <style scoped>
 .page { padding: 32px; max-width: 900px; }

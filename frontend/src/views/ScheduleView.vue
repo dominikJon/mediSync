@@ -1,3 +1,157 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue';
+import axios from 'axios';
+import { useAuthStore } from '../stores/auth';
+
+// interfejsy
+interface Specjalizacja { id: number; nazwa: string; }
+interface Lekarz { id: number; imie: string; nazwisko: string; specjalizacje: string[]; }
+interface Slot { id: number; termin_od: string; termin_do: string; gabinet_numer: string; cena: number; }
+interface Pacjent { id: number; imie: string; nazwisko: string; pesel: string; }
+
+// store (pinia) i rola uzytkownika
+const authStore = useAuthStore();
+const czyRejestracja = computed(() => ['rejestracja', 'admin'].includes(authStore.user?.rola || ''));
+
+// stany
+const specjalizacje = ref<Specjalizacja[]>([]);
+const lekarze = ref<Lekarz[]>([]);
+const sloty = ref<Slot[]>([]);
+
+const wybranaSpecjalizacjaId = ref<number | null>(null);
+const wybranyLekarzId = ref<number | null>(null);
+const wybranaData = ref<string>('');
+const wybranySlot = ref<Slot | null>(null);
+
+// stany - rejestracja pacjenta
+const wybranyPacjent = ref<Pacjent | null>(null);
+const szukajPacjentaQuery = ref('');
+const wynikiSzukania = ref<Pacjent[]>([]);
+const isSearching = ref(false);
+
+const isLoadingLekarze = ref(false);
+const isLoadingSloty = ref(false);
+const isBooking = ref(false);
+
+const blad = ref<string>('');
+const sukces = ref<string>('');
+
+const aktualnyLekarz = computed(() => lekarze.value.find(l => l.id === wybranyLekarzId.value));
+const dzisiejszaData = computed(() => new Date().toISOString().split('T')[0]);
+
+const formatujGodzine = (dataIso: string) => dataIso.substring(11, 16);
+
+// metody
+const szukajPacjenta = async () => {
+  if (szukajPacjentaQuery.value.length < 2) {
+    wynikiSzukania.value = [];
+    return;
+  }
+  isSearching.value = true;
+  try {
+    const res = await axios.get(`/api/pacjenci/szukaj?q=${szukajPacjentaQuery.value}`);
+    wynikiSzukania.value = res.data.pacjenci;
+  } catch (error) {
+    console.error("Błąd szukania pacjentów:", error);
+  } finally {
+    isSearching.value = false;
+  }
+};
+
+const resetujSloty = () => {
+  sloty.value = [];
+  wybranySlot.value = null;
+  blad.value = '';
+  sukces.value = '';
+  if (wybranaData.value) {
+    pobierzSloty();
+  }
+};
+
+const pobierzSpecjalizacje = async () => {
+  try {
+    const response = await axios.get('/api/specjalizacje/lista');
+    specjalizacje.value = response.data.specjalizacje;
+  } catch (error: any) {
+    console.error("Błąd pobierania specjalizacji:", error);
+  }
+};
+
+const pobierzLekarzy = async () => {
+  isLoadingLekarze.value = true;
+  wybranyLekarzId.value = null;
+  resetujSloty();
+  try {
+    const url = wybranaSpecjalizacjaId.value
+      ? `/api/lekarze/lista?specjalizacja_id=${wybranaSpecjalizacjaId.value}`
+      : `/api/lekarze/lista`;
+    const response = await axios.get(url);
+    lekarze.value = response.data.lekarze;
+  } catch (error: any) {
+    console.error("Błąd pobierania lekarzy:", error);
+  } finally {
+    isLoadingLekarze.value = false;
+  }
+};
+
+const pobierzSloty = async () => {
+  if (!wybranyLekarzId.value || !wybranaData.value) return;
+  isLoadingSloty.value = true;
+  wybranySlot.value = null;
+  blad.value = '';
+  sukces.value = '';
+  
+  try {
+    const response = await axios.get(`/api/wizyty/wolne-sloty?lekarz_id=${wybranyLekarzId.value}&data=${wybranaData.value}`);
+    sloty.value = response.data.sloty;
+  } catch (error: any) {
+    blad.value = error.response?.data?.detail || "Wystąpił błąd przy pobieraniu terminów.";
+  } finally {
+    isLoadingSloty.value = false;
+  }
+};
+
+const zarezerwujWizyte = async () => {
+  if (!wybranySlot.value) return;
+  
+  if (czyRejestracja.value && !wybranyPacjent.value) {
+    blad.value = 'Wybierz pacjenta przed rezerwacją.';
+    return;
+  }
+
+  isBooking.value = true;
+  blad.value = '';
+  sukces.value = '';
+  
+  try {
+    const payload = { 
+      grafik_id: wybranySlot.value.id, 
+      pacjent_id: czyRejestracja.value ? wybranyPacjent.value?.id : null 
+    };
+    await axios.post('/api/wizyty', payload);
+    
+    sukces.value = "Wizyta zarezerwowana!";
+    wybranaData.value = '';
+    sloty.value = [];
+    wybranySlot.value = null;
+    wybranyLekarzId.value = null;
+    wybranyPacjent.value = null;
+    szukajPacjentaQuery.value = '';
+    
+  } catch (error: any) {
+    blad.value = error.response?.data?.detail || "Nie udało się zarezerwować wizyty. Spróbuj ponownie.";
+    pobierzSloty();
+  } finally {
+    isBooking.value = false;
+  }
+};
+
+onMounted(() => {
+  pobierzSpecjalizacje();
+  pobierzLekarzy();
+});
+</script>
+
 <template>
   <div class="page">
     <h1 class="page-title">Umów nową wizytę</h1>
@@ -162,160 +316,6 @@
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
-import axios from 'axios';
-import { useAuthStore } from '../stores/auth';
-
-// interfejsy
-interface Specjalizacja { id: number; nazwa: string; }
-interface Lekarz { id: number; imie: string; nazwisko: string; specjalizacje: string[]; }
-interface Slot { id: number; termin_od: string; termin_do: string; gabinet_numer: string; cena: number; }
-interface Pacjent { id: number; imie: string; nazwisko: string; pesel: string; }
-
-// store (pinia) i rola uzytkownika
-const authStore = useAuthStore();
-const czyRejestracja = computed(() => ['rejestracja', 'admin'].includes(authStore.user?.rola || ''));
-
-// stany
-const specjalizacje = ref<Specjalizacja[]>([]);
-const lekarze = ref<Lekarz[]>([]);
-const sloty = ref<Slot[]>([]);
-
-const wybranaSpecjalizacjaId = ref<number | null>(null);
-const wybranyLekarzId = ref<number | null>(null);
-const wybranaData = ref<string>('');
-const wybranySlot = ref<Slot | null>(null);
-
-// stany - rejestracja pacjenta
-const wybranyPacjent = ref<Pacjent | null>(null);
-const szukajPacjentaQuery = ref('');
-const wynikiSzukania = ref<Pacjent[]>([]);
-const isSearching = ref(false);
-
-const isLoadingLekarze = ref(false);
-const isLoadingSloty = ref(false);
-const isBooking = ref(false);
-
-const blad = ref<string>('');
-const sukces = ref<string>('');
-
-const aktualnyLekarz = computed(() => lekarze.value.find(l => l.id === wybranyLekarzId.value));
-const dzisiejszaData = computed(() => new Date().toISOString().split('T')[0]);
-
-const formatujGodzine = (dataIso: string) => dataIso.substring(11, 16);
-
-// metody
-const szukajPacjenta = async () => {
-  if (szukajPacjentaQuery.value.length < 2) {
-    wynikiSzukania.value = [];
-    return;
-  }
-  isSearching.value = true;
-  try {
-    const res = await axios.get(`/api/pacjenci/szukaj?q=${szukajPacjentaQuery.value}`);
-    wynikiSzukania.value = res.data.pacjenci;
-  } catch (error) {
-    console.error("Błąd szukania pacjentów:", error);
-  } finally {
-    isSearching.value = false;
-  }
-};
-
-const resetujSloty = () => {
-  sloty.value = [];
-  wybranySlot.value = null;
-  blad.value = '';
-  sukces.value = '';
-  if (wybranaData.value) {
-    pobierzSloty();
-  }
-};
-
-const pobierzSpecjalizacje = async () => {
-  try {
-    const response = await axios.get('/api/specjalizacje/lista');
-    specjalizacje.value = response.data.specjalizacje;
-  } catch (error: any) {
-    console.error("Błąd pobierania specjalizacji:", error);
-  }
-};
-
-const pobierzLekarzy = async () => {
-  isLoadingLekarze.value = true;
-  wybranyLekarzId.value = null;
-  resetujSloty();
-  try {
-    const url = wybranaSpecjalizacjaId.value
-      ? `/api/lekarze/lista?specjalizacja_id=${wybranaSpecjalizacjaId.value}`
-      : `/api/lekarze/lista`;
-    const response = await axios.get(url);
-    lekarze.value = response.data.lekarze;
-  } catch (error: any) {
-    console.error("Błąd pobierania lekarzy:", error);
-  } finally {
-    isLoadingLekarze.value = false;
-  }
-};
-
-const pobierzSloty = async () => {
-  if (!wybranyLekarzId.value || !wybranaData.value) return;
-  isLoadingSloty.value = true;
-  wybranySlot.value = null;
-  blad.value = '';
-  sukces.value = '';
-  
-  try {
-    const response = await axios.get(`/api/wizyty/wolne-sloty?lekarz_id=${wybranyLekarzId.value}&data=${wybranaData.value}`);
-    sloty.value = response.data.sloty;
-  } catch (error: any) {
-    blad.value = error.response?.data?.detail || "Wystąpił błąd przy pobieraniu terminów.";
-  } finally {
-    isLoadingSloty.value = false;
-  }
-};
-
-const zarezerwujWizyte = async () => {
-  if (!wybranySlot.value) return;
-  
-  if (czyRejestracja.value && !wybranyPacjent.value) {
-    blad.value = 'Wybierz pacjenta przed rezerwacją.';
-    return;
-  }
-
-  isBooking.value = true;
-  blad.value = '';
-  sukces.value = '';
-  
-  try {
-    const payload = { 
-      grafik_id: wybranySlot.value.id, 
-      pacjent_id: czyRejestracja.value ? wybranyPacjent.value?.id : null 
-    };
-    await axios.post('/api/wizyty', payload);
-    
-    sukces.value = "Wizyta zarezerwowana!";
-    wybranaData.value = '';
-    sloty.value = [];
-    wybranySlot.value = null;
-    wybranyLekarzId.value = null;
-    wybranyPacjent.value = null;
-    szukajPacjentaQuery.value = '';
-    
-  } catch (error: any) {
-    blad.value = error.response?.data?.detail || "Nie udało się zarezerwować wizyty. Spróbuj ponownie.";
-    pobierzSloty();
-  } finally {
-    isBooking.value = false;
-  }
-};
-
-onMounted(() => {
-  pobierzSpecjalizacje();
-  pobierzLekarzy();
-});
-</script>
 
 <style scoped>
 .page {
