@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 
@@ -15,10 +15,10 @@ const resetowanie = ref(false)
 const blad = ref('')
 const sukces = ref('')
 
-const ROLE = ['admin', 'lekarz', 'pracownik', 'pacjent']
-
 // Edytowalne pola
 const wybrana_rola = ref('')
+const imie = ref('')
+const nazwisko = ref('')
 const telefon = ref('')
 const miejscowosc = ref('')
 const kod_pocztowy = ref('')
@@ -42,11 +42,13 @@ const pobierzDane = async () => {
     specjalizacje.value = specRes.data.specjalizacje
     placowki.value = placRes.data.placowki
 
-    // Wypełnij pola
     wybrana_rola.value = uzytkownik.value.rola
     const p = uzytkownik.value.profil
 
+    // Wypełnianie pól formularza
     if (p) {
+      imie.value = p.imie || ''
+      nazwisko.value = p.nazwisko || ''
       telefon.value = p.telefon || ''
       miejscowosc.value = p.miejscowosc || ''
       kod_pocztowy.value = p.kod_pocztowy || ''
@@ -79,6 +81,8 @@ const zapiszZmiany = async () => {
   try {
     await axios.put(`/api/admin/user/${userId}`, {
       rola: wybrana_rola.value,
+      imie: imie.value || null,
+      nazwisko: nazwisko.value || null,
       telefon: telefon.value || null,
       miejscowosc: miejscowosc.value || null,
       kod_pocztowy: kod_pocztowy.value || null,
@@ -91,9 +95,9 @@ const zapiszZmiany = async () => {
       specjalizacje_ids: wybrane_specjalizacje.value,
     })
     sukces.value = 'Zmiany zostały zapisane.'
-    await pobierzDane()
-  } catch {
-    blad.value = 'Błąd podczas zapisywania zmian.'
+    await pobierzDane() // Odśwież widok z bazy
+  } catch (error: any) {
+    blad.value = error.response?.data?.detail || 'Błąd podczas zapisywania zmian.'
   } finally {
     zapisywanie.value = false
   }
@@ -133,7 +137,6 @@ onMounted(pobierzDane)
       <div v-if="blad" class="error-box">{{ blad }}</div>
       <div v-if="sukces" class="sukces-box">{{ sukces }}</div>
 
-      <!-- Dane podstawowe -->
       <div class="card">
         <div class="card-title">Dane konta</div>
         <div class="info-grid">
@@ -151,93 +154,98 @@ onMounted(pobierzDane)
               {{ uzytkownik.profil_uzupelniony ? '✓ Uzupełniona' : '✗ Brak' }}
             </span>
           </div>
-          <div class="info-row">
-            <span class="info-label">Tymczasowe hasło</span>
-            <span :class="uzytkownik.tymczasowe_haslo ? 'status-brak' : 'status-ok'">
-              {{ uzytkownik.tymczasowe_haslo ? '⚠ Tak — użytkownik powinien zmienić hasło' : 'Nie' }}
-            </span>
-          </div>
         </div>
       </div>
 
-      <!-- Zmiana roli -->
-      <div v-if="uzytkownik.rola === 'pracownik'" class="card">
+      <div v-if="['admin', 'rejestracja'].includes(uzytkownik.rola)" class="card">
         <div class="card-title">Rola użytkownika</div>
         <div class="form-group">
-        <label>Aktualna rola</label>
-        <select v-model="wybrana_rola">
-        <option value="pracownik">pracownik</option>
-        <option value="admin">admin</option>
-        </select>
-        <p class="hint-text">⚠ Zmiana roli nie przenosi danych profilu między tabelami.</p>
-    </div>
-    </div>
-
-      <!-- Profil pacjenta -->
-      <div v-if="uzytkownik.rola === 'pacjent'" class="card">
-        <div class="card-title">Dane pacjenta</div>
-        <div class="form-grid">
-          <div class="form-group">
-            <label>Imię</label>
-            <input :value="uzytkownik.profil?.imie" disabled class="input-disabled" />
-          </div>
-          <div class="form-group">
-            <label>Nazwisko</label>
-            <input :value="uzytkownik.profil?.nazwisko" disabled class="input-disabled" />
-          </div>
-          <div class="form-group">
-            <label>PESEL</label>
-            <input :value="uzytkownik.profil?.pesel" disabled class="input-disabled" />
-          </div>
-          <div class="form-group">
-            <label>Telefon</label>
-            <input v-model="telefon" type="text" placeholder="np. 600200300" />
-          </div>
-
-          <div class="section-title full">Adres zamieszkania</div>
-
-          <div class="form-group">
-            <label>Miejscowość</label>
-            <input v-model="miejscowosc" type="text" />
-          </div>
-          <div class="form-group">
-            <label>Kod pocztowy</label>
-            <input v-model="kod_pocztowy" type="text" placeholder="00-000" />
-          </div>
-          <div class="form-group">
-            <label>Ulica</label>
-            <input v-model="ulica" type="text" />
-          </div>
-          <div class="form-group">
-            <label>Nr domu</label>
-            <input v-model="nr_domu" type="text" />
-          </div>
-          <div class="form-group">
-            <label>Nr lokalu</label>
-            <input v-model="nr_lokalu" type="text" />
-          </div>
+          <label>Aktualna rola</label>
+          <select v-model="wybrana_rola">
+            <option value="rejestracja">Rejestracja</option>
+            <option value="admin">Admin</option>
+          </select>
+          <p class="hint-text">⚠ Zmiana roli wpływa tylko na poziom uprawnień w systemie.</p>
         </div>
       </div>
 
-      <!-- Profil lekarza -->
+      <div v-if="uzytkownik.rola === 'pacjent'" class="card">
+        <div class="card-title">Dane pacjenta</div>
+        
+        <template v-if="uzytkownik.profil_uzupelniony">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Imię</label>
+              <input v-model="imie" type="text" />
+            </div>
+            <div class="form-group">
+              <label>Nazwisko</label>
+              <input v-model="nazwisko" type="text" />
+            </div>
+            <div class="form-group">
+              <label>PESEL</label>
+              <input :value="uzytkownik.profil?.pesel" disabled class="input-disabled" title="PESEL jest niezmienny" />
+            </div>
+            <div class="form-group">
+              <label>Telefon</label>
+              <input v-model="telefon" type="text" placeholder="np. 600200300" />
+            </div>
+
+            <div class="section-title full">Adres zamieszkania</div>
+
+            <div class="form-group">
+              <label>Miejscowość</label>
+              <input v-model="miejscowosc" type="text" />
+            </div>
+            <div class="form-group">
+              <label>Kod pocztowy</label>
+              <input v-model="kod_pocztowy" type="text" placeholder="00-000" />
+            </div>
+            <div class="form-group">
+              <label>Ulica</label>
+              <input v-model="ulica" type="text" />
+            </div>
+            <div class="form-group">
+              <label>Nr domu</label>
+              <input v-model="nr_domu" type="text" />
+            </div>
+            <div class="form-group">
+              <label>Nr lokalu</label>
+              <input v-model="nr_lokalu" type="text" />
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <div class="empty-profile-notice">
+            <div class="empty-icon">⚠</div>
+            <p><strong>Pacjent nie uzupełnił jeszcze kartoteki.</strong></p>
+            <p class="muted">Edycja danych będzie możliwa dopiero po pierwszym zalogowaniu się pacjenta i uzupełnieniu profilu.</p>
+          </div>
+        </template>
+      </div>
+
       <div v-else-if="uzytkownik.rola === 'lekarz'" class="card">
         <div class="card-title">Dane lekarza</div>
         <div class="form-grid">
           <div class="form-group">
             <label>Imię</label>
-            <input :value="uzytkownik.profil?.imie" disabled class="input-disabled" />
+            <input v-model="imie" type="text" />
           </div>
           <div class="form-group">
             <label>Nazwisko</label>
-            <input :value="uzytkownik.profil?.nazwisko" disabled class="input-disabled" />
+            <input v-model="nazwisko" type="text" />
           </div>
           <div class="form-group">
-            <label>NPWZ</label>
-            <input :value="uzytkownik.profil?.npwz" disabled class="input-disabled" />
+            <label>Telefon</label>
+            <input v-model="telefon" type="text" placeholder="np. 600200300" />
           </div>
           <div class="form-group">
             <label>PESEL</label>
-            <input :value="uzytkownik.profil?.pesel ?? 'Brak (lekarz zagraniczny)'" disabled class="input-disabled" />
+            <input :value="uzytkownik.profil?.pesel ?? 'Brak (lekarz zagraniczny)'" disabled class="input-disabled" title="PESEL jest niezmienny" />
+          </div>
+          <div class="form-group">
+            <label>NPWZ</label>
+            <input :value="uzytkownik.profil?.npwz" disabled class="input-disabled" title="Numer PWZ jest niezmienny" />
           </div>
           <div class="form-group">
             <label>Status NPWZ</label>
@@ -272,21 +280,20 @@ onMounted(pobierzDane)
         </div>
       </div>
 
-      <!-- Profil pracownika -->
-      <div v-else-if="uzytkownik.rola === 'pracownik'" class="card">
+      <div v-else-if="['admin', 'rejestracja'].includes(uzytkownik.rola)" class="card">
         <div class="card-title">Dane pracownika</div>
         <div class="form-grid">
           <div class="form-group">
             <label>Imię</label>
-            <input :value="uzytkownik.profil?.imie" disabled class="input-disabled" />
+            <input v-model="imie" type="text" />
           </div>
           <div class="form-group">
             <label>Nazwisko</label>
-            <input :value="uzytkownik.profil?.nazwisko" disabled class="input-disabled" />
+            <input v-model="nazwisko" type="text" />
           </div>
           <div class="form-group">
             <label>PESEL</label>
-            <input :value="uzytkownik.profil?.pesel" disabled class="input-disabled" />
+            <input :value="uzytkownik.profil?.pesel" disabled class="input-disabled" title="PESEL jest niezmienny" />
           </div>
           <div class="form-group">
             <label>Telefon</label>
@@ -295,11 +302,14 @@ onMounted(pobierzDane)
         </div>
       </div>
 
-      <!-- Akcje -->
       <div class="card akcje-card">
         <div class="card-title">Akcje</div>
         <div class="akcje-row">
-          <button @click="zapiszZmiany" class="btn-primary" :disabled="zapisywanie">
+          <button 
+            @click="zapiszZmiany" 
+            class="btn-primary" 
+            :disabled="zapisywanie || (uzytkownik.rola === 'pacjent' && !uzytkownik.profil_uzupelniony)"
+          >
             {{ zapisywanie ? 'Zapisywanie...' : 'Zapisz zmiany' }}
           </button>
           <button @click="resetujHaslo" class="btn-danger" :disabled="resetowanie">
@@ -349,7 +359,7 @@ onMounted(pobierzDane)
 .info-row { display: flex; justify-content: space-between; align-items: center; }
 .info-label { font-size: 13px; color: #64748b; font-weight: 600; }
 .info-value { font-size: 14px; color: #1e293b; }
-.muted { color: #94a3b8; }
+.muted { color: #94a3b8; margin: 0; }
 
 .status-ok { color: #16a34a; font-weight: 600; font-size: 13px; }
 .status-brak { color: #dc2626; font-weight: 600; font-size: 13px; }
@@ -394,6 +404,20 @@ onMounted(pobierzDane)
   cursor: not-allowed;
 }
 
+.empty-profile-notice {
+  text-align: center;
+  padding: 32px 20px;
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+}
+
+.empty-icon {
+  font-size: 32px;
+  color: #94a3b8;
+  margin-bottom: 12px;
+}
+
 .specjalizacje-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .spec-chip {
@@ -404,7 +428,6 @@ onMounted(pobierzDane)
 }
 .spec-chip:hover { border-color: #3b82f6; color: #3b82f6; }
 .spec-chip.aktywna { border-color: #3b82f6; background: #dbeafe; color: #1e40af; }
-
 
 .akcje-row { display: flex; gap: 12px; }
 
