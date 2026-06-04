@@ -13,6 +13,11 @@
       <button @click="blad = ''" class="close-btn">✕</button>
     </div>
 
+    <div v-if="sukces" class="sukces-box">
+      {{ sukces }}
+      <button @click="sukces = ''" class="close-btn">✕</button>
+    </div>
+
     <div v-if="ladowanie" class="loading-state">
       Pobieranie wizyt...
     </div>
@@ -43,7 +48,7 @@
             <td class="fw-bold">
               {{ w.termin_od.substring(11, 16) }} – {{ w.termin_do.substring(11, 16) }}
             </td>
-            <td>{{ w.pacjent_imie }} {{ w.pacjent_nazwisko }}</td>
+            <td>{{ w.pacjent }}</td>
             <td>{{ w.gabinet }}</td>
             <td>
               <span :class="['badge', statusKolor(w.status)]">{{ w.status }}</span>
@@ -53,9 +58,22 @@
               <span v-else title="Brak">❌</span>
             </td>
             <td>
-              <button @click="otworzWizyte(w.id)" class="btn-primary btn-sm">
-                {{ w.status === 'Zakończona' ? 'Podgląd EDM' : 'Otwórz wizytę' }}
-              </button>
+              <div class="akcje-row">
+                <button @click="otworzWizyte(w.id)" class="btn-primary btn-sm">
+                  {{ w.status === 'Zakończona' ? 'Podgląd EDM' : 'Otwórz wizytę' }}
+                </button>
+
+                <div v-if="w.status === 'Zaplanowana' && moznaOdwolac(w.termin_od)">
+                  <div v-if="wizytaDoOdwolania === w.id" class="confirm-actions">
+                    <span class="confirm-text">Na pewno?</span>
+                    <button @click="odwolaj(w.id)" class="btn-danger btn-sm">Tak</button>
+                    <button @click="wizytaDoOdwolania = null" class="btn-secondary btn-sm">Nie</button>
+                  </div>
+                  <button v-else @click="wizytaDoOdwolania = w.id" class="btn-danger btn-outline btn-sm">
+                    Odwołaj
+                  </button>
+                </div>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -77,8 +95,7 @@ interface WizytaLekarza {
   status: string;
   termin_od: string;
   termin_do: string;
-  pacjent_imie: string;
-  pacjent_nazwisko: string;
+  pacjent: string;
   gabinet: string;
   ma_dokumentacje: boolean;
 }
@@ -129,6 +146,27 @@ const statusKolor = (status: string) => {
 onMounted(() => {
   fetchWizyty();
 });
+
+const wizytaDoOdwolania = ref<number | null>(null)
+const sukces = ref('')
+
+const moznaOdwolac = (termin_od: string): boolean => {
+  const termin = new Date(termin_od + (termin_od.includes('+') || termin_od.endsWith('Z') ? '' : 'Z'))
+  return termin > new Date(Date.now() + 24 * 60 * 60 * 1000)
+}
+
+const odwolaj = async (id: number) => {
+  blad.value = ''
+  sukces.value = ''
+  try {
+    await axios.delete(`/api/wizyty/${id}`)
+    wizytaDoOdwolania.value = null
+    sukces.value = 'Wizyta została odwołana.'
+    await fetchWizyty()
+  } catch (error: any) {
+    blad.value = error.response?.data?.detail || 'Nie udało się odwołać wizyty.'
+  }
+}
 </script>
 
 <style scoped>
@@ -324,5 +362,60 @@ onMounted(() => {
 
 .empty-icon {
   font-size: 36px;
+}
+
+.akcje-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.confirm-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ef4444;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.btn-danger:hover { background: #dc2626; }
+
+.btn-danger.btn-outline {
+  background: white;
+  color: #ef4444;
+  border: 1px solid #ef4444;
+}
+
+.btn-danger.btn-outline:hover { background: #fef2f2; }
+
+.sukces-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #dcfce7;
+  color: #15803d;
+  padding: 14px 20px;
+  border-radius: 8px;
+  border: 1px solid #86efac;
+  margin-bottom: 24px;
+  font-weight: 500;
+  font-size: 14px;
 }
 </style>

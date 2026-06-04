@@ -18,7 +18,9 @@ const menuPacjent = [
 
 // Lekarz
 const menuLekarz = [
-  { name: 'Moje wizyty', path: '/lekarz/wizyty', icon: '🗓️' },
+  { name: 'Moje wizyty',        path: '/lekarz/wizyty',   icon: '🗓️' },
+  { name: 'Historia wizyt',     path: '/lekarz/historia', icon: '📋' },
+  { name: 'Kartoteka pacjenta', path: '/lekarz/pacjent',  icon: '🔍' },
 ]
 
 // Admin
