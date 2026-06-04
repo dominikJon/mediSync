@@ -1669,7 +1669,7 @@ def pobierz_uzytkownika(
     elif uzytkownik.rola == "lekarz":
         profil = db.execute(text("""
             SELECT l.imie, l.nazwisko, l.pesel, l.npwz, l.status_npwz,
-                   l.waznosc_oc, l.placowka_id, p.nazwa AS placowka_nazwa
+                   l.waznosc_oc, l.placowka_id, l.telefon, p.nazwa AS placowka_nazwa
             FROM lekarze l
             LEFT JOIN placowki p ON l.placowka_id = p.id
             WHERE l.uzytkownik_id = :id
@@ -1687,14 +1687,15 @@ def pobierz_uzytkownika(
             dane["profil"] = {
                 "imie": profil.imie, "nazwisko": profil.nazwisko,
                 "pesel": profil.pesel, "npwz": profil.npwz,
+                "telefon": profil.telefon,
                 "status_npwz": profil.status_npwz,
-                "waznosc_oc": str(profil.waznosc_oc),
+                "waznosc_oc": str(profil.waznosc_oc) if profil.waznosc_oc else None,
                 "placowka_id": profil.placowka_id,
                 "placowka_nazwa": profil.placowka_nazwa,
                 "specjalizacje": [{"id": s.id, "nazwa": s.nazwa} for s in specjalizacje],
             }
 
-    elif uzytkownik.rola == "pracownik":
+    elif uzytkownik.rola in ["admin", "rejestracja"]:
         profil = db.execute(text("""
             SELECT imie, nazwisko, telefon, pesel
             FROM pracownicy WHERE uzytkownik_id = :id
@@ -1726,7 +1727,6 @@ def aktualizuj_uzytkownika(
     if not uzytkownik:
         raise HTTPException(status_code=404, detail="Użytkownik nie istnieje")
 
-    # Zmiana roli
     if request.rola and request.rola != uzytkownik.rola:
         nowa_rola = db.execute(
             text("SELECT id FROM role WHERE nazwa = :nazwa"),
@@ -1740,7 +1740,6 @@ def aktualizuj_uzytkownika(
 
     rola = request.rola or uzytkownik.rola
 
-    # Aktualizacja profilu pacjenta
     if rola == "pacjent":
         pacjent = db.execute(
             text("SELECT id, adres_id FROM pacjenci WHERE uzytkownik_id = :id"),
@@ -1748,10 +1747,18 @@ def aktualizuj_uzytkownika(
         ).fetchone()
 
         if pacjent:
-            if request.telefon:
-                db.execute(text("""
-                    UPDATE pacjenci SET telefon = :telefon WHERE uzytkownik_id = :id
-                """), {"telefon": request.telefon, "id": user_id})
+            db.execute(text("""
+                UPDATE pacjenci SET 
+                    imie = COALESCE(:imie, imie),
+                    nazwisko = COALESCE(:nazwisko, nazwisko),
+                    telefon = COALESCE(:telefon, telefon)
+                WHERE uzytkownik_id = :id
+            """), {
+                "imie": request.imie,
+                "nazwisko": request.nazwisko,
+                "telefon": request.telefon,
+                "id": user_id
+            })
 
             if any([request.miejscowosc, request.kod_pocztowy,
                     request.ulica, request.nr_domu, request.nr_lokalu]):
@@ -1772,7 +1779,6 @@ def aktualizuj_uzytkownika(
                     "adres_id": pacjent.adres_id,
                 })
 
-    # Aktualizacja profilu lekarza
     elif rola == "lekarz":
         lekarz = db.execute(
             text("SELECT id FROM lekarze WHERE uzytkownik_id = :id"),
@@ -1780,19 +1786,24 @@ def aktualizuj_uzytkownika(
         ).fetchone()
 
         if lekarz:
-            if request.status_npwz or request.waznosc_oc or request.placowka_id:
-                db.execute(text("""
-                    UPDATE lekarze SET
-                        status_npwz = COALESCE(:status_npwz, status_npwz),
-                        waznosc_oc = COALESCE(:waznosc_oc::date, waznosc_oc),
-                        placowka_id = COALESCE(:placowka_id, placowka_id)
-                    WHERE id = :id
-                """), {
-                    "status_npwz": request.status_npwz,
-                    "waznosc_oc": request.waznosc_oc,
-                    "placowka_id": request.placowka_id,
-                    "id": lekarz.id,
-                })
+            db.execute(text("""
+                UPDATE lekarze SET
+                    imie = COALESCE(:imie, imie),
+                    nazwisko = COALESCE(:nazwisko, nazwisko),
+                    telefon = COALESCE(:telefon, telefon),
+                    status_npwz = COALESCE(:status_npwz, status_npwz),
+                    waznosc_oc = COALESCE(CAST(:waznosc_oc AS DATE), waznosc_oc),
+                    placowka_id = COALESCE(:placowka_id, placowka_id)
+                WHERE id = :id
+            """), {
+                "imie": request.imie,
+                "nazwisko": request.nazwisko,
+                "telefon": request.telefon,
+                "status_npwz": request.status_npwz,
+                "waznosc_oc": request.waznosc_oc,
+                "placowka_id": request.placowka_id,
+                "id": lekarz.id,
+            })
 
             if request.specjalizacje_ids is not None:
                 db.execute(text("""
@@ -1805,12 +1816,19 @@ def aktualizuj_uzytkownika(
                         ON CONFLICT DO NOTHING
                     """), {"lekarz_id": lekarz.id, "spec_id": spec_id})
 
-    # Aktualizacja pracownika
-    elif rola == "pracownik":
-        if request.telefon:
-            db.execute(text("""
-                UPDATE pracownicy SET telefon = :telefon WHERE uzytkownik_id = :id
-            """), {"telefon": request.telefon, "id": user_id})
+    elif rola in ["admin", "rejestracja"]:
+        db.execute(text("""
+            UPDATE pracownicy SET 
+                imie = COALESCE(:imie, imie),
+                nazwisko = COALESCE(:nazwisko, nazwisko),
+                telefon = COALESCE(:telefon, telefon)
+            WHERE uzytkownik_id = :id
+        """), {
+            "imie": request.imie,
+            "nazwisko": request.nazwisko,
+            "telefon": request.telefon,
+            "id": user_id
+        })
 
     db.commit()
     return {"status": "sukces"}
