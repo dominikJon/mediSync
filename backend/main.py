@@ -780,6 +780,63 @@ def uzupelnij_kartoteke(request: KartotekaRequest, db: Session = Depends(get_db)
 
 # ======== ENDPOINTY ADMINA ========
 
+@app.get("/api/admin/pulpit")
+def pulpit_admina(
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin)
+):
+    # Liczba użytkowników per rola
+    role_stats = db.execute(text("""
+        SELECT r.nazwa, COUNT(u.id) AS liczba
+        FROM role r
+        LEFT JOIN uzytkownicy u ON r.id = u.rola_id
+        GROUP BY r.nazwa
+        ORDER BY r.nazwa
+    """)).fetchall()
+
+    # Ostatnio dodani użytkownicy
+    ostatni = db.execute(text("""
+        SELECT u.id, u.email, r.nazwa AS rola,
+               COALESCE(p.imie, l.imie, pr.imie) AS imie,
+               COALESCE(p.nazwisko, l.nazwisko, pr.nazwisko) AS nazwisko
+        FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        LEFT JOIN pacjenci p ON u.id = p.uzytkownik_id
+        LEFT JOIN lekarze l ON u.id = l.uzytkownik_id
+        LEFT JOIN pracownicy pr ON u.id = pr.uzytkownik_id
+        ORDER BY u.id DESC
+        LIMIT 5
+    """)).fetchall()
+
+    # Gabinety
+    gabinety = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'Dostępny')    AS dostepne,
+            COUNT(*) FILTER (WHERE status = 'Niedostępny') AS niedostepne
+        FROM gabinety
+    """)).fetchone()
+
+    return {
+        "uzytkownicy": {
+            r.nazwa: r.liczba for r in role_stats
+        },
+        "ostatni_uzytkownicy": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "rola": u.rola,
+                "imie": u.imie,
+                "nazwisko": u.nazwisko,
+            }
+            for u in ostatni
+        ],
+        "gabinety": {
+            "dostepne": gabinety.dostepne,
+            "niedostepne": gabinety.niedostepne,
+        }
+    }
+
+
 @app.get("/api/admin/users")
 def lista_uzytkownikow(
     db: Session = Depends(get_db),
@@ -1092,6 +1149,98 @@ def raport_wizyty(
     }
 
 # ======== ENDPOINTY GABINETY ========
+
+@app.get("/api/reception/pulpit")
+def pulpit_rejestracji(
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    # Wizyty na dziś
+    wizyty_dzis = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE w.status = 'Zaplanowana') AS zaplanowane,
+            COUNT(*) FILTER (WHERE w.status = 'Zakończona')  AS zakonczone,
+            COUNT(*) FILTER (WHERE w.status = 'Odwołana')    AS odwolane
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        WHERE DATE(gp.termin_od) = CURRENT_DATE
+    """)).fetchone()
+
+    # Lista wizyt na dziś ze szczegółami
+    lista_dzis = db.execute(text("""
+        SELECT
+            w.id, w.status,
+            gp.termin_od, gp.termin_do,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+            l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
+            g.numer AS gabinet
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        WHERE DATE(gp.termin_od) = CURRENT_DATE
+        AND w.status = 'Zaplanowana'
+        ORDER BY gp.termin_od ASC
+        LIMIT 8
+    """)).fetchall()
+
+    # Lekarze dziś pracujący
+    lekarze_dzis = db.execute(text("""
+        SELECT DISTINCT
+            l.imie, l.nazwisko,
+            array_agg(DISTINCT g.numer) AS gabinety,
+            COUNT(gp.id) AS liczba_slotow,
+            COUNT(w.id) AS zajete_sloty
+        FROM grafiki_pracy gp
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        LEFT JOIN wizyty w ON gp.id = w.grafik_id AND w.status = 'Zaplanowana'
+        WHERE DATE(gp.termin_od) = CURRENT_DATE
+        GROUP BY l.id, l.imie, l.nazwisko
+        ORDER BY l.nazwisko
+    """)).fetchall()
+
+    # Wolne sloty na dziś
+    wolne_sloty = db.execute(text("""
+        SELECT COUNT(*) AS liczba
+        FROM grafiki_pracy gp
+        LEFT JOIN wizyty w ON gp.id = w.grafik_id AND w.status = 'Zaplanowana'
+        WHERE DATE(gp.termin_od) = CURRENT_DATE
+        AND w.id IS NULL
+        AND gp.termin_od > NOW()
+    """)).fetchone()
+
+    return {
+        "wizyty_dzis": {
+            "zaplanowane": wizyty_dzis.zaplanowane,
+            "zakonczone": wizyty_dzis.zakonczone,
+            "odwolane": wizyty_dzis.odwolane,
+        },
+        "lista_dzis": [
+            {
+                "id": w.id,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "lekarz": f"dr {w.lekarz_imie} {w.lekarz_nazwisko}",
+                "gabinet": w.gabinet,
+                "status": w.status,
+            }
+            for w in lista_dzis
+        ],
+        "lekarze_dzis": [
+            {
+                "lekarz": f"dr {l.imie} {l.nazwisko}",
+                "gabinety": l.gabinety,
+                "liczba_slotow": l.liczba_slotow,
+                "zajete_sloty": l.zajete_sloty,
+                "wolne_sloty": l.liczba_slotow - l.zajete_sloty,
+            }
+            for l in lekarze_dzis
+        ],
+        "wolne_sloty_dzis": wolne_sloty.liczba,
+    }
 
 #POBARANIE LISTY GABINETOW
 @app.get("/api/reception/gabinety")
