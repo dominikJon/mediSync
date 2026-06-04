@@ -540,13 +540,6 @@ def tylko_pacjent(token: str = Depends(oauth2_scheme)) -> dict:
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola pacjent")
     return payload
 
-# Helper lekarza
-def tylko_lekarz(token: str = Depends(oauth2_scheme)) -> dict:
-    payload = weryfikuj_token(token)
-    if payload.get("rola") != "lekarz":
-        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola lekarz")
-    return payload
-
 
 # ======== ENDPOINTY ========
 
@@ -2197,7 +2190,7 @@ def pulpit_lekarza(
                 "id": w.id,
                 "status": w.status,
                 "termin_od": w.termin_od.isoformat(),
-                "termin_do": w.termin_do.isoformat(),
+                "termin_do": w.termin_do.isoformat(),lekarz
                 "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
                 "gabinet": w.gabinet,
             }
@@ -2223,57 +2216,6 @@ def pulpit_lekarza(
 
 
 #pobieranie wizyt na dany dzien dla lekarza
-@app.get("/api/lekarz/wizyty")
-def wizyty_lekarza(
-    data: date = Query(...),
-    db: Session = Depends(get_db),
-    payload: dict = Depends(tylko_lekarz)
-):
-    lekarz = db.execute(
-        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
-        {"uid": payload["id"]}
-    ).fetchone()
-
-    if not lekarz:
-        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
-
-    wizyty = db.execute(text("""
-        SELECT w.id, w.status,
-               gp.termin_od, gp.termin_do,
-               p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
-               p.pesel, p.telefon,
-               g.numer AS gabinet,
-               c.nazwa_uslugi, c.cena
-        FROM wizyty w
-        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
-        JOIN pacjenci p ON w.pacjent_id = p.id
-        JOIN gabinety g ON gp.gabinet_id = g.id
-        JOIN cennik c ON w.cennik_id = c.id
-        WHERE gp.lekarz_id = :lid
-        AND DATE(gp.termin_od) = :data
-        AND w.status != 'Odwołana'
-        ORDER BY gp.termin_od ASC
-    """), {"lid": lekarz.id, "data": data}).fetchall()
-
-    return {
-        "wizyty": [
-            {
-                "id": w.id,
-                "status": w.status,
-                "termin_od": w.termin_od.isoformat(),
-                "termin_do": w.termin_do.isoformat(),
-                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
-                "pacjent_pesel": w.pesel,
-                "pacjent_telefon": w.telefon,
-                "gabinet": w.gabinet,
-                "nazwa_uslugi": w.nazwa_uslugi,
-                "cena": str(w.cena),
-            }
-            for w in wizyty
-        ]
-    }
-
-# Historia wizyt lekarza (zakończone)
 @app.get("/api/lekarz/wizyty")
 def wizyty_lekarza(
     data: date = Query(...),
