@@ -2190,7 +2190,7 @@ def pulpit_lekarza(
                 "id": w.id,
                 "status": w.status,
                 "termin_od": w.termin_od.isoformat(),
-                "termin_do": w.termin_do.isoformat(),lekarz
+                "termin_do": w.termin_do.isoformat(),
                 "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
                 "gabinet": w.gabinet,
             }
