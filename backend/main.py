@@ -540,6 +540,13 @@ def tylko_pacjent(token: str = Depends(oauth2_scheme)) -> dict:
         raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola pacjent")
     return payload
 
+# Helper lekarza
+def tylko_lekarz(token: str = Depends(oauth2_scheme)) -> dict:
+    payload = weryfikuj_token(token)
+    if payload.get("rola") != "lekarz":
+        raise HTTPException(status_code=403, detail="Brak uprawnień — wymagana rola lekarz")
+    return payload
+
 
 # ======== ENDPOINTY ========
 
@@ -1845,8 +1852,7 @@ async def odwolaj_wizyte(
     wizyta = db.execute(text("""
         SELECT 
             w.id, w.pacjent_id, w.status,
-            gp.termin_od, gp.termin_do,
-            gp.gabinet_id,
+            gp.termin_od, gp.lekarz_id,
             l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
             ul.email AS lekarz_email,
             p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
@@ -1868,9 +1874,12 @@ async def odwolaj_wizyte(
     if wizyta.status == "Odwołana":
         raise HTTPException(400, "Wizyta jest już odwołana.")
 
-    rola = payload.get("rola")
+    if wizyta.status == "Zakończona":
+        raise HTTPException(400, "Nie można odwołać zakończonej wizyty.")
 
-    # Sprawdzenie uprawnień i ustalenie kto odwołuje
+    rola = payload.get("rola")
+    now_time = datetime.now(timezone.utc) if wizyta.termin_od.tzinfo else datetime.now()
+
     if rola == "pacjent":
         pacjent = db.execute(
             text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"),
@@ -1878,8 +1887,16 @@ async def odwolaj_wizyte(
         ).fetchone()
         if not pacjent or wizyta.pacjent_id != pacjent.id:
             raise HTTPException(403, "Nie masz uprawnień do odwołania tej wizyty.")
+        if wizyta.termin_od <= now_time + timedelta(hours=24):
+            raise HTTPException(409, "Odwołanie możliwe tylko 24h przed terminem.")
 
-        now_time = datetime.now(timezone.utc) if wizyta.termin_od.tzinfo else datetime.now()
+    elif rola == "lekarz":
+        lekarz = db.execute(
+            text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+            {"uid": payload.get("id")}
+        ).fetchone()
+        if not lekarz or wizyta.lekarz_id != lekarz.id:
+            raise HTTPException(403, "Nie masz uprawnień do odwołania tej wizyty.")
         if wizyta.termin_od <= now_time + timedelta(hours=24):
             raise HTTPException(409, "Odwołanie możliwe tylko 24h przed terminem.")
 
@@ -1899,7 +1916,6 @@ async def odwolaj_wizyte(
 
     termin = wizyta.termin_od.strftime("%d.%m.%Y o %H:%M")
 
-    # Pobierz email recepcjonistów
     recepcjonisci = db.execute(text("""
         SELECT u.email FROM uzytkownicy u
         JOIN role r ON u.rola_id = r.id
@@ -1912,18 +1928,12 @@ async def odwolaj_wizyte(
         <h2>Odwołanie wizyty — MediSync</h2>
         <p>Wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
         <table style="border-collapse: collapse; margin: 16px 0;">
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
-                <td style="padding: 8px 0;">{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
-                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
-                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
-            </tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+                <td>{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td><strong>{termin}</strong></td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td>{wizyta.gabinet_numer}</td></tr>
         </table>
         <p>Zespół MediSync</p>
         """
@@ -1934,27 +1944,19 @@ async def odwolaj_wizyte(
         <p>Drogi/a {wizyta.pacjent_imie} {wizyta.pacjent_nazwisko},</p>
         <p>Twoja wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
         <table style="border-collapse: collapse; margin: 16px 0;">
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
-                <td style="padding: 8px 0;">dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
-                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
-                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
-            </tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+                <td>dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td><strong>{termin}</strong></td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td>{wizyta.gabinet_numer}</td></tr>
         </table>
-        <p>Zapraszamy do rezerwacji nowego terminu.</p>
         <a href="http://localhost:5173/schedule" style="
             display: inline-block; padding: 12px 24px;
             background-color: #3b82f6; color: white;
             text-decoration: none; border-radius: 8px; font-weight: bold;
         ">Zarezerwuj nowy termin</a>
-        <br><br>
-        <p>Zespół MediSync</p>
+        <br><br><p>Zespół MediSync</p>
         """
 
     def tresc_dla_recepcji(kto_odwolal: str) -> str:
@@ -1962,29 +1964,20 @@ async def odwolaj_wizyte(
         <h2>Odwołanie wizyty — MediSync</h2>
         <p>Wizyta została odwołana przez <strong>{kto_odwolal}</strong>.</p>
         <table style="border-collapse: collapse; margin: 16px 0;">
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
-                <td style="padding: 8px 0;">{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
-                <td style="padding: 8px 0;">dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
-                <td style="padding: 8px 0;"><strong>{termin}</strong></td>
-            </tr>
-            <tr>
-                <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
-                <td style="padding: 8px 0;">{wizyta.gabinet_numer}</td>
-            </tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+                <td>{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+                <td>dr {wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}</td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+                <td><strong>{termin}</strong></td></tr>
+            <tr><td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+                <td>{wizyta.gabinet_numer}</td></tr>
         </table>
         <p>Zespół MediSync</p>
         """
 
     # Wysyłka emaili w zależności od roli
     if rola == "pacjent":
-        # Pacjent odwołuje → email do lekarza i recepcji
         await fastmail.send_message(MessageSchema(
             subject="Odwołanie wizyty — MediSync",
             recipients=[wizyta.lekarz_email],
@@ -1999,8 +1992,22 @@ async def odwolaj_wizyte(
                 subtype="html"
             ))
 
+    elif rola == "lekarz":
+        await fastmail.send_message(MessageSchema(
+            subject="Odwołanie wizyty — MediSync",
+            recipients=[wizyta.pacjent_email],
+            body=tresc_dla_pacjenta("lekarza"),
+            subtype="html"
+        ))
+        if emaile_recepcji:
+            await fastmail.send_message(MessageSchema(
+                subject="Odwołanie wizyty — MediSync",
+                recipients=emaile_recepcji,
+                body=tresc_dla_recepcji("lekarza"),
+                subtype="html"
+            ))
+
     elif rola in ["admin", "rejestracja"]:
-        # Recepcja/admin odwołuje → email do pacjenta i lekarza
         await fastmail.send_message(MessageSchema(
             subject="Odwołanie wizyty — MediSync",
             recipients=[wizyta.pacjent_email],
@@ -2017,96 +2024,399 @@ async def odwolaj_wizyte(
     return {"status": "sukces", "wiadomosc": "Wizyta została odwołana."}
 
 
-# pojedyczna rezerwacja szczegoly
-@app.get("/api/wizyty/{wizyta_id}")
-def szczegoly_wizyty(wizyta_id: int, db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
-    zapytanie = text("""
-        SELECT w.id, w.status, w.pacjent_id, gp.termin_od, gp.termin_do,
-               l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko, g.numer AS gabinet
-        FROM wizyty w
-        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
-        JOIN lekarze l ON gp.lekarz_id = l.id
-        JOIN gabinety g ON gp.gabinet_id = g.id
-        WHERE w.id = :wizyta_id
-    """)
-    wizyta = db.execute(zapytanie, {"wizyta_id": wizyta_id}).fetchone()
-    
-    if not wizyta:
-        raise HTTPException(404, "Nie znaleziono wizyty.")
-        
-    if payload.get("rola") == "pacjent":
-        pacjent = db.execute(text("SELECT id FROM pacjenci WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
-        if not pacjent or wizyta.pacjent_id != pacjent.id:
-            raise HTTPException(403, "Brak dostępu.")
-
-    return {
-        "id": wizyta.id,
-        "status": wizyta.status,
-        "termin_od": wizyta.termin_od.isoformat(),
-        "termin_do": wizyta.termin_do.isoformat(),
-        "lekarz": f"{wizyta.lekarz_imie} {wizyta.lekarz_nazwisko}",
-        "gabinet": wizyta.gabinet
-    }
-
-
 # ======ENDPOINTY PANEL LEKARZA=======
 
-#pobieranie wizyt na dany dzien dla lekarza
-@app.get("/api/lekarz/wizyty")
-def wizyty_lekarza(
-    data: date = Query(default=None),
+# Pulpit lekarza
+@app.get("/api/lekarz/pulpit")
+def pulpit_lekarza(
     db: Session = Depends(get_db),
-    payload: dict = Depends(tylko_lekarz)  
+    payload: dict = Depends(tylko_lekarz)
 ):
-    if data is None:
-        data = date.today()
+    lekarz = db.execute(
+        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+        {"uid": payload["id"]}
+    ).fetchone()
 
-    lekarz = db.execute(text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"), {"uid": payload.get("id")}).fetchone()
     if not lekarz:
-        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza.")
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
 
-    # Trigger: auto-zamknięcie przeterminowanych wizyt (>24h bez EDM)
-    db.execute(text("""
-        UPDATE wizyty SET status = 'Nieobecność'
-        WHERE status = 'Zaplanowana'
-        AND grafik_id IN (
-            SELECT id FROM grafiki_pracy
-            WHERE termin_od < NOW() - INTERVAL '24 hours'
-        )
-    """))
-    db.commit()
-
-    zapytanie = text("""
-        SELECT 
-            w.id, w.status, gp.termin_od, gp.termin_do,
-            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
-            g.numer AS gabinet,
-            CASE WHEN dm.id IS NOT NULL THEN true ELSE false END AS ma_dokumentacje
+    # Wizyty na dziś
+    wizyty_dzis = db.execute(text("""
+        SELECT w.id, w.status,
+               gp.termin_od, gp.termin_do,
+               p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+               g.numer AS gabinet
         FROM wizyty w
         JOIN grafiki_pracy gp ON w.grafik_id = gp.id
         JOIN pacjenci p ON w.pacjent_id = p.id
         JOIN gabinety g ON gp.gabinet_id = g.id
-        LEFT JOIN dokumentacja_medyczna dm ON dm.wizyta_id = w.id
-        WHERE gp.lekarz_id = :lekarz_id
+        WHERE gp.lekarz_id = :lid
+        AND DATE(gp.termin_od) = CURRENT_DATE
+        AND w.status = 'Zaplanowana'
+        ORDER BY gp.termin_od ASC
+    """), {"lid": lekarz.id}).fetchall()
+
+    # Statystyki tego tygodnia
+    stats_tydzien = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE w.status = 'Zaplanowana') AS zaplanowane,
+            COUNT(*) FILTER (WHERE w.status = 'Zakończona')  AS zakonczone,
+            COUNT(*) FILTER (WHERE w.status = 'Odwołana')    AS odwolane
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        WHERE gp.lekarz_id = :lid
+        AND gp.termin_od >= DATE_TRUNC('week', NOW())
+        AND gp.termin_od < DATE_TRUNC('week', NOW()) + INTERVAL '7 days'
+    """), {"lid": lekarz.id}).fetchone()
+
+    # Statystyki całkowite
+    stats_total = db.execute(text("""
+        SELECT
+            COUNT(*) FILTER (WHERE w.status = 'Zakończona') AS wszystkie_zakonczone,
+            COUNT(DISTINCT w.pacjent_id)                    AS unikalni_pacjenci
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        WHERE gp.lekarz_id = :lid
+    """), {"lid": lekarz.id}).fetchone()
+
+    # Najczęstsze rozpoznanie ICD-10
+    top_icd = db.execute(text("""
+        SELECT dm.kod_icd10, icd.nazwa, COUNT(*) AS liczba
+        FROM dokumentacja_medyczna dm
+        JOIN wizyty w ON dm.wizyta_id = w.id
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN slownik_icd10 icd ON dm.kod_icd10 = icd.kod
+        WHERE gp.lekarz_id = :lid
+        AND dm.kod_icd10 IS NOT NULL
+        GROUP BY dm.kod_icd10, icd.nazwa
+        ORDER BY liczba DESC
+        LIMIT 1
+    """), {"lid": lekarz.id}).fetchone()
+
+    return {
+        "wizyty_dzis": [
+            {
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "gabinet": w.gabinet,
+            }
+            for w in wizyty_dzis
+        ],
+        "statystyki": {
+            "tydzien": {
+                "zaplanowane": stats_tydzien.zaplanowane,
+                "zakonczone": stats_tydzien.zakonczone,
+                "odwolane": stats_tydzien.odwolane,
+            },
+            "total": {
+                "zakonczone": stats_total.wszystkie_zakonczone,
+                "unikalni_pacjenci": stats_total.unikalni_pacjenci,
+                "top_icd": {
+                    "kod": top_icd.kod_icd10,
+                    "nazwa": top_icd.nazwa,
+                    "liczba": top_icd.liczba,
+                } if top_icd else None,
+            }
+        }
+    }
+
+
+#pobieranie wizyt na dany dzien dla lekarza
+@app.get("/api/lekarz/wizyty")
+def wizyty_lekarza(
+    data: date = Query(...),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(
+        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+        {"uid": payload["id"]}
+    ).fetchone()
+
+    if not lekarz:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
+
+    wizyty = db.execute(text("""
+        SELECT w.id, w.status,
+               gp.termin_od, gp.termin_do,
+               p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+               p.pesel, p.telefon,
+               g.numer AS gabinet,
+               c.nazwa_uslugi, c.cena
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        JOIN cennik c ON w.cennik_id = c.id
+        WHERE gp.lekarz_id = :lid
         AND DATE(gp.termin_od) = :data
-        ORDER BY gp.termin_od
-    """)
-    wyniki = db.execute(zapytanie, {"lekarz_id": lekarz.id, "data": data}).fetchall()
+        AND w.status != 'Odwołana'
+        ORDER BY gp.termin_od ASC
+    """), {"lid": lekarz.id, "data": data}).fetchall()
 
     return {
         "wizyty": [
             {
-                "id": r.id,
-                "status": r.status,
-                "termin_od": r.termin_od.isoformat(),
-                "termin_do": r.termin_do.isoformat(),
-                "pacjent_imie": r.pacjent_imie,
-                "pacjent_nazwisko": r.pacjent_nazwisko,
-                "gabinet": r.gabinet,
-                "ma_dokumentacje": r.ma_dokumentacje
-            } for r in wyniki
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "pacjent_pesel": w.pesel,
+                "pacjent_telefon": w.telefon,
+                "gabinet": w.gabinet,
+                "nazwa_uslugi": w.nazwa_uslugi,
+                "cena": str(w.cena),
+            }
+            for w in wizyty
         ]
     }
+
+# Historia wizyt lekarza (zakończone)
+@app.get("/api/lekarz/wizyty")
+def wizyty_lekarza(
+    data: date = Query(...),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(
+        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+        {"uid": payload["id"]}
+    ).fetchone()
+
+    if not lekarz:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
+
+    wizyty = db.execute(text("""
+        SELECT w.id, w.status,
+               gp.termin_od, gp.termin_do,
+               p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+               p.pesel, p.telefon,
+               g.numer AS gabinet,
+               c.nazwa_uslugi, c.cena
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        JOIN cennik c ON w.cennik_id = c.id
+        WHERE gp.lekarz_id = :lid
+        AND DATE(gp.termin_od) = :data
+        AND w.status != 'Odwołana'
+        ORDER BY gp.termin_od ASC
+    """), {"lid": lekarz.id, "data": data}).fetchall()
+
+    return {
+        "wizyty": [
+            {
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "pacjent_pesel": w.pesel,
+                "pacjent_telefon": w.telefon,
+                "gabinet": w.gabinet,
+                "nazwa_uslugi": w.nazwa_uslugi,
+                "cena": str(w.cena),
+            }
+            for w in wizyty
+        ]
+    }
+
+# Historia wizyt lekarza (zakończone)
+@app.get("/api/lekarz/historia")
+def historia_lekarza(
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(
+        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+        {"uid": payload["id"]}
+    ).fetchone()
+
+    if not lekarz:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
+
+    wizyty = db.execute(text("""
+        SELECT w.id, w.status,
+               gp.termin_od, gp.termin_do,
+               p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+               p.pesel,
+               g.numer AS gabinet,
+               c.nazwa_uslugi, c.cena,
+               dm.wywiad_lekarski, dm.kod_icd10,
+               icd.nazwa AS icd10_nazwa
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        JOIN cennik c ON w.cennik_id = c.id
+        LEFT JOIN dokumentacja_medyczna dm ON w.id = dm.wizyta_id
+        LEFT JOIN slownik_icd10 icd ON dm.kod_icd10 = icd.kod
+        WHERE gp.lekarz_id = :lid
+        AND w.status = 'Zakończona'
+        ORDER BY gp.termin_od DESC
+    """), {"lid": lekarz.id}).fetchall()
+
+    return {
+        "wizyty": [
+            {
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "pacjent_pesel": w.pesel,
+                "gabinet": w.gabinet,
+                "nazwa_uslugi": w.nazwa_uslugi,
+                "cena": str(w.cena),
+                "dokumentacja": {
+                    "wywiad_lekarski": w.wywiad_lekarski,
+                    "kod_icd10": w.kod_icd10,
+                    "icd10_nazwa": w.icd10_nazwa,
+                } if w.kod_icd10 or w.wywiad_lekarski else None,
+            }
+            for w in wizyty
+        ]
+    }
+
+# Kartoteka pacjenta dla lekarza
+@app.get("/api/lekarz/pacjent")
+def kartoteka_pacjenta(
+    q: str = Query(..., min_length=2),
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    wyniki = db.execute(text("""
+        SELECT p.id, p.imie, p.nazwisko, p.pesel, p.telefon,
+               a.miejscowosc, a.kod_pocztowy, a.ulica, a.nr_domu, a.nr_lokalu
+        FROM pacjenci p
+        LEFT JOIN adresy a ON p.adres_id = a.id
+        WHERE p.imie ILIKE :q
+           OR p.nazwisko ILIKE :q
+           OR CONCAT(p.imie, ' ', p.nazwisko) ILIKE :q
+           OR p.pesel LIKE :q_exact
+        ORDER BY p.nazwisko, p.imie
+        LIMIT 10
+    """), {"q": f"%{q}%", "q_exact": f"{q}%"}).fetchall()
+
+    return {
+        "pacjenci": [
+            {
+                "id": w.id,
+                "imie": w.imie,
+                "nazwisko": w.nazwisko,
+                "pesel": w.pesel,
+                "telefon": w.telefon,
+                "adres": {
+                    "miejscowosc": w.miejscowosc,
+                    "kod_pocztowy": w.kod_pocztowy,
+                    "ulica": w.ulica,
+                    "nr_domu": w.nr_domu,
+                    "nr_lokalu": w.nr_lokalu,
+                }
+            }
+            for w in wyniki
+        ]
+    }
+
+# Anulowanie wizyty przez lekarza
+@app.delete("/api/lekarz/wizyty/{wizyta_id}")
+async def lekarz_odwolaj_wizyte(
+    wizyta_id: int,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_lekarz)
+):
+    lekarz = db.execute(
+        text("SELECT id FROM lekarze WHERE uzytkownik_id = :uid"),
+        {"uid": payload["id"]}
+    ).fetchone()
+
+    if not lekarz:
+        raise HTTPException(status_code=404, detail="Nie znaleziono profilu lekarza")
+
+    wizyta = db.execute(text("""
+        SELECT
+            w.id, w.status,
+            gp.termin_od, gp.lekarz_id,
+            gp.gabinet_id,
+            g.numer AS gabinet_numer,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+            up.email AS pacjent_email
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN uzytkownicy up ON p.uzytkownik_id = up.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        WHERE w.id = :wid
+    """), {"wid": wizyta_id}).fetchone()
+
+    if not wizyta:
+        raise HTTPException(status_code=404, detail="Nie znaleziono wizyty")
+
+    if wizyta.lekarz_id != lekarz.id:
+        raise HTTPException(status_code=403, detail="To nie jest Twoja wizyta")
+
+    if wizyta.status == "Odwołana":
+        raise HTTPException(status_code=400, detail="Wizyta jest już odwołana")
+
+    if wizyta.status == "Zakończona":
+        raise HTTPException(status_code=400, detail="Nie można odwołać zakończonej wizyty")
+
+    now_time = datetime.now(timezone.utc) if wizyta.termin_od.tzinfo else datetime.now()
+    if wizyta.termin_od <= now_time + timedelta(hours=24):
+        raise HTTPException(
+            status_code=409,
+            detail="Odwołanie możliwe tylko do 24h przed terminem"
+        )
+
+    try:
+        db.execute(
+            text("UPDATE wizyty SET status = 'Odwołana' WHERE id = :id"),
+            {"id": wizyta_id}
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Błąd: {str(e)}")
+
+    termin = wizyta.termin_od.strftime("%d.%m.%Y o %H:%M")
+    lekarz_dane = db.execute(text("""
+        SELECT l.imie, l.nazwisko, u.email
+        FROM lekarze l JOIN uzytkownicy u ON l.uzytkownik_id = u.id
+        WHERE l.id = :lid
+    """), {"lid": lekarz.id}).fetchone()
+
+    recepcjonisci = db.execute(text("""
+        SELECT u.email FROM uzytkownicy u
+        JOIN role r ON u.rola_id = r.id
+        WHERE r.nazwa = 'rejestracja'
+    """)).fetchall()
+    emaile_recepcji = [r.email for r in recepcjonisci]
+
+    wspolna_tabela = f"""
+    <table style="border-collapse: collapse; margin: 16px 0;">
+        <tr>
+            <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Pacjent:</td>
+            <td>{wizyta.pacjent_imie} {wizyta.pacjent_nazwisko}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Lekarz:</td>
+            <td>dr {lekarz_dane.imie} {lekarz_dane.nazwisko}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Termin:</td>
+            <td><strong>{termin}</strong></td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 16px 8px 0; color: #64748b; font-weight: 600;">Gabinet:</td>
+            <td>{wizyta.gabinet_numer}</td>
+        </tr>
+    </table>
+    """
 
 #szczegoly konkretnej wizyty dla lekarza
 # 1.2 Szczegóły konkretnej wizyty + EDM
