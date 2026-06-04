@@ -1208,7 +1208,6 @@ def pulpit_rejestracji(
         LEFT JOIN wizyty w ON gp.id = w.grafik_id AND w.status = 'Zaplanowana'
         WHERE DATE(gp.termin_od) = CURRENT_DATE
         AND w.id IS NULL
-        AND gp.termin_od > NOW()
     """)).fetchone()
 
     return {
