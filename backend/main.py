@@ -1441,6 +1441,48 @@ async def zmien_status_gabinetu(
 
 # ======== ENDPOINTY GRAFIK ========
 
+@app.get("/api/reception/wizyty")
+def lista_wizyt_recepcji(
+    data: Optional[date] = None,
+    db: Session = Depends(get_db),
+    payload: dict = Depends(tylko_admin_lub_rejestracja)
+):
+    if not data:
+        data = date.today()
+
+    wizyty = db.execute(text("""
+        SELECT
+            w.id, w.status,
+            gp.termin_od, gp.termin_do,
+            p.imie AS pacjent_imie, p.nazwisko AS pacjent_nazwisko,
+            p.telefon AS pacjent_telefon,
+            l.imie AS lekarz_imie, l.nazwisko AS lekarz_nazwisko,
+            g.numer AS gabinet
+        FROM wizyty w
+        JOIN grafiki_pracy gp ON w.grafik_id = gp.id
+        JOIN pacjenci p ON w.pacjent_id = p.id
+        JOIN lekarze l ON gp.lekarz_id = l.id
+        JOIN gabinety g ON gp.gabinet_id = g.id
+        WHERE DATE(gp.termin_od) = :data
+        ORDER BY gp.termin_od ASC
+    """), {"data": data}).fetchall()
+
+    return {
+        "wizyty": [
+            {
+                "id": w.id,
+                "status": w.status,
+                "termin_od": w.termin_od.isoformat(),
+                "termin_do": w.termin_do.isoformat(),
+                "pacjent": f"{w.pacjent_imie} {w.pacjent_nazwisko}",
+                "pacjent_telefon": w.pacjent_telefon,
+                "lekarz": f"dr {w.lekarz_imie} {w.lekarz_nazwisko}",
+                "gabinet": w.gabinet,
+            }
+            for w in wizyty
+        ]
+    }
+
 @app.get("/api/reception/lekarze")
 def lista_lekarzy(
     db: Session = Depends(get_db),

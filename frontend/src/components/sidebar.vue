@@ -35,9 +35,10 @@ const menuAdmin = [
 
 // Rejestracja
 const menuReceptionist = [
-  { name: 'Gabinety', path: '/reception/office', icon: '🏥' },
-  { name: 'Grafiki pracy', path: '/reception/graphic', icon: '📅' },
-  { name: 'Umów wizytę', path: '/schedule', icon: '📆' },
+  { name: 'Gabinety',      path: '/reception/office',   icon: '🏥' },
+  { name: 'Grafiki pracy', path: '/reception/graphic',  icon: '📅' },
+  { name: 'Lista wizyt',   path: '/reception/wizyty',   icon: '📋' }, 
+  { name: 'Umów wizytę',   path: '/schedule',           icon: '📆' },
 ]
 
 const isPacjent = computed(() => authStore.user?.rola === 'pacjent')

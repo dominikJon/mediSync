@@ -19,6 +19,7 @@ import DoctorVisitsView from '../views/DoctorVisitsView.vue'
 import DoctorVisitView from '../views/DoctorVisitView.vue' //szczegoly danej wizyty dla lekarza
 import DoctorHistoryView from '../views/DoctorHistoryView.vue'
 import DoctorPatientView from '../views/DoctorPatientView.vue'
+import ReceptionVisitsView from '../views/ReceptionVisitsView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -137,6 +138,12 @@ const router = createRouter({
       component: DoctorPatientView,
       meta: { requiresAuth: true }
     },
+    {
+      path: '/reception/wizyty',
+      name: 'reception-wizyty',
+      component: ReceptionVisitsView,
+      meta: { requiresAuth: true }
+    }
   ]
 })
 
