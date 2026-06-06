@@ -4,7 +4,7 @@ from sqlalchemy import text
 from datetime import date
 
 from database import get_db
-from dependencies import tylko_admin
+from dependencies import tylko_admin, kazdy_zalogowany
 
 router = APIRouter(tags=["Raporty Admina"])
 
@@ -92,5 +92,28 @@ def raport_wizyty(od: date = Query(...), do_daty: date = Query(..., alias="do"),
                 "nieobecnosci": r.nieobecnosci, 
                 "zaplanowane": r.zaplanowane
             } for r in per_lekarz
+        ]
+    }
+
+#endpoint do cennika dla pacjentow na pulpicie 
+@router.get("/api/cennik")
+def pobierz_cennik(db: Session = Depends(get_db), payload: dict = Depends(kazdy_zalogowany)):
+    wyniki = db.execute(text("""
+        SELECT c.id, c.nazwa_uslugi, c.cena, s.nazwa AS specjalizacja
+        FROM cennik c
+        LEFT JOIN specjalizacje s ON c.specjalizacja_id = s.id
+        WHERE c.data_do IS NULL OR c.data_do > NOW()
+        ORDER BY c.cena ASC
+    """)).fetchall()
+
+    return {
+        "cennik": [
+            {
+                "id": w.id,
+                "nazwa_uslugi": w.nazwa_uslugi,
+                "cena": float(w.cena),
+                "specjalizacja": w.specjalizacja,
+            }
+            for w in wyniki
         ]
     }

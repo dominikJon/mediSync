@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+
 import axios from 'axios'
 
 const router = useRouter()
@@ -9,6 +10,24 @@ const authStore = useAuthStore()
 const ladowanie = ref(true)
 const blad = ref('')
 const dane = ref<any>(null)
+
+interface CennikPozycja {
+  id: number
+  nazwa_uslugi: string
+  cena: number
+  specjalizacja: string | null
+}
+
+const cennik = ref<CennikPozycja[]>([])
+
+const pobierzCennik = async () => {
+  try {
+    const res = await axios.get('/api/cennik')
+    cennik.value = res.data.cennik
+  } catch {
+    // cennik nie jest krytyczny wiec nie wyswietlamy bledu
+  }
+}
 
 const pobierzDane = async () => {
   if (authStore.user?.rola !== 'pacjent') {
@@ -39,7 +58,10 @@ const formatGodzina = (iso: string) => {
   })
 }
 
-onMounted(pobierzDane)
+onMounted(() => {
+  pobierzDane()
+  pobierzCennik()
+})
 </script>
 
 <template>
@@ -114,6 +136,26 @@ onMounted(pobierzDane)
         <button @click="router.push('/records')" class="btn-link">
           Zobacz całą historię →
         </button>
+      </div>
+      <!-- Cennik -->
+      <div class="card" v-if="cennik.length > 0">
+        <div class="card-title">Cennik usług</div>
+        <table class="cennik-tabela">
+          <thead>
+            <tr>
+              <th>Usługa</th>
+              <th>Specjalizacja</th>
+              <th class="text-right">Cena</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in cennik" :key="p.id">
+              <td class="usluga-nazwa">{{ p.nazwa_uslugi }}</td>
+              <td class="usluga-spec">{{ p.specjalizacja ?? 'Ogólna' }}</td>
+              <td class="text-right usluga-cena">{{ p.cena.toFixed(2) }} zł</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
     </template>
@@ -230,4 +272,19 @@ onMounted(pobierzDane)
 .btn-primary:hover { background: #2563eb; }
 
 .muted { color: #64748b; }
+
+.cennik-tabela { width: 100%; border-collapse: collapse; font-size: 14px; }
+
+.cennik-tabela th { text-align: left; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 12px 10px 0; border-bottom: 1px solid #e2e8f0; }
+
+.cennik-tabela td { padding: 12px 12px 12px 0; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
+
+.cennik-tabela tbody tr:last-child td { border-bottom: none; }
+
+.cennik-tabela tbody tr:hover { background: #f8fafc; }
+
+.usluga-nazwa { font-weight: 600; }
+.usluga-spec { color: #64748b; font-size: 13px; }
+.usluga-cena { font-weight: 700; white-space: nowrap; }
+.text-right { text-align: right; }
 </style>
