@@ -55,7 +55,7 @@ onMounted(pobierzDane)
         </div>
         <div class="stat-kafelek zielony">
           <span class="stat-liczba">{{ dane.uzytkownicy['pacjent'] ?? 0 }}</span>
-          <span class="stat-opis">Pacjentów</span>
+          <span class="stat-opis">Pacjentów (wszyscy włącznie bez kartotek)</span>
         </div>
         <div class="stat-kafelek fioletowy">
           <span class="stat-liczba">{{ dane.uzytkownicy['rejestracja'] ?? 0 }}</span>
