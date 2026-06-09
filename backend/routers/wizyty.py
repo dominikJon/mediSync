@@ -76,7 +76,8 @@ def wolne_sloty_lekarza(lekarz_id: int, data: date, db: Session = Depends(get_db
         WHERE gp.lekarz_id = :lekarz_id 
           AND DATE(gp.termin_od) = :data 
           AND w.id IS NULL 
-          AND gp.termin_od > NOW() 
+          AND gp.termin_od > NOW()
+          AND g.status = 'Dostępny' 
         ORDER BY gp.termin_od
     """), {"lekarz_id": lekarz_id, "data": data}).fetchall()
     

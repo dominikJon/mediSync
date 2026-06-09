@@ -123,8 +123,9 @@ def lista_grafiku(data: date = Query(..., description="Data w formacie YYYY-MM-D
         FROM grafiki_pracy gp 
         JOIN lekarze l ON gp.lekarz_id = l.id 
         JOIN gabinety g ON gp.gabinet_id = g.id 
-        LEFT JOIN wizyty w ON w.grafik_id = gp.id 
+        LEFT JOIN wizyty w ON w.grafik_id = gp.id AND w.status = 'Zaplanowana' --Łączymy tylko z aktywnymi wizytami
         WHERE DATE(gp.termin_od) = :data 
+          AND (g.status = 'Dostępny' OR w.id IS NOT NULL) -- Ukrywa wolne sloty w zamkniętych gabinetach
         ORDER BY gp.termin_od, l.nazwisko
     """), {"data": data}).fetchall()
     
