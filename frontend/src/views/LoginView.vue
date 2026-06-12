@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const route = useRoute()
+const zarejestrowano = route.query.registered === '1'
 const authStore = useAuthStore()
 
 const email = ref('')
@@ -52,6 +55,10 @@ const handleLogin = async () => {
       <h2><span class="text-blue">Medi</span><span class="text-green">Sync</span></h2>
     </div>
     <h3 class="auth-title">Zaloguj się</h3>
+
+    <div v-if="zarejestrowano" class="sukces-box">
+      Konto zostało utworzone.
+    </div>
 
     <div v-if="blad" class="error-box">{{ blad }}</div>
 
@@ -107,6 +114,18 @@ const handleLogin = async () => {
 .text-green { color: #28a745; font-weight: bold; }
 
 .auth-title { margin-bottom: 24px; color: #1e293b; }
+
+.sukces-box {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  text-align: left;
+  font-weight: 500;
+}
 
 .error-box {
   background: #fee2e2;

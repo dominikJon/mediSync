@@ -69,7 +69,7 @@ const handleRegister = async () => {
       email: email.value,
       haslo: password.value,
     })
-    router.push({ name: 'login' })
+    router.push({ name: 'login', query: { registered: '1' } })
   } catch (error: any) {
     if (error.response?.status === 409) {
       blad.value = 'Konto z tym adresem email już istnieje'
