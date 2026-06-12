@@ -144,7 +144,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page narrow-page">
     <h1 class="page-title">Moje wizyty</h1>
 
     <div v-if="blad" class="error-box">
@@ -275,6 +275,11 @@ onMounted(() => {
 
 <style scoped>
 .page { padding: 32px; max-width: 900px; }
+
+.narrow-page {
+  max-width: 1000px;
+  margin: 0 auto;
+}
 
 .page-title {
   font-size: 24px; font-weight: 700;

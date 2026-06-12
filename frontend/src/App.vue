@@ -29,7 +29,7 @@ body {
   background-color: #F8FAFC;
 }
 
-/* glowny uklad strony */
+/* glowny uklad strony */ 
 .app-layout {
   display: flex; 
   min-height: 100vh;
@@ -40,9 +40,27 @@ body {
   flex: 1; 
   padding: 32px;
   overflow-y: auto;
+
+  display: flex;
+  flex-direction: column;  
+  align-items: center;    
+  justify-content: flex-start; 
 }
 
-/* wyglad bez sidebar */
+/* omijamy .full-width (czyli logowanie/rejestrację/odzyskiwanie hasła)
+   zwezony widok dla RecordView */
+.main-content:not(.full-width) > .page:not(.narrow-page),
+.main-content:not(.full-width) > .grafik-view:not(.narrow-page) {
+  width: 100% !important;
+  max-width: 1600px !important;
+  margin: 0 auto !important;
+}
+
+.main-content > * {
+  width: 100%;
+}
+
+/* wyglad bez sidebar (Ekrany logowania / rejestracji) */
 .main-content.full-width {
   padding: 0;
   display: flex;
