@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 
 interface Lekarz {
   id: number
@@ -29,6 +29,21 @@ const doctors = ref<Lekarz[]>([])
 const rooms = ref<Gabinet[]>([])
 const dailySchedule = ref<Slot[]>([])
 const previewSlots = ref<string[]>([])
+
+// zmienne do filtrowania grafikow pracy
+const wybranyLekarzGrafik = ref('')
+
+const unikalniLekarzeGrafik = computed(() => {
+  const wszyscy = dailySchedule.value.map(g => g.lekarz)
+  return [...new Set(wszyscy)] // wyciąga unikalne imiona i nazwiska z pobranego dnia
+})
+
+const przefiltrowanyGrafik = computed(() => {
+  if (!wybranyLekarzGrafik.value) {
+    return dailySchedule.value
+  }
+  return dailySchedule.value.filter(g => g.lekarz === wybranyLekarzGrafik.value)
+})
 
 const tryb = ref<'pojedynczy' | 'cykliczny'>('pojedynczy')
 const formCykliczny = ref({
@@ -85,6 +100,8 @@ const fetchRooms = async () => {
 const fetchSchedule = async () => {
   ladowanie.value = true
   blad.value = ''
+  // przy zmianie dnia resetujem filtr na danego lekarza
+  wybranyLekarzGrafik.value = '' 
   try {
     const res = await fetch(`/api/reception/grafiki?data=${currentViewDate.value}`, { headers: getHeaders() })
     if (!res.ok) throw new Error()
@@ -113,7 +130,7 @@ const waliduj = (): boolean => {
     if (!formCykliczny.value.data_od || !formCykliczny.value.data_do) { blad.value = 'Wybierz zakres dat.'; return false }
     if (formCykliczny.value.data_od > formCykliczny.value.data_do) { blad.value = 'Data "od" nie może być późniejsza niż "do".'; return false }
     if (formCykliczny.value.wybrane_dni.length === 0) { blad.value = 'Wybierz co najmniej jeden dzień tygodnia.'; return false }
-
+    
     // Walidacja max 360 dni
     const dataOd = new Date(formCykliczny.value.data_od + 'T00:00:00').getTime()
     const dataDo = new Date(formCykliczny.value.data_do + 'T00:00:00').getTime()
@@ -136,7 +153,7 @@ const obliczDatyCykliczne = () => {
 
   while (aktualna <= koncowa) {
     if (formCykliczny.value.wybrane_dni.includes(aktualna.getDay())) {
-      // Kuloodporne wyciąganie stringa YYYY-MM-DD w czasie lokalnym
+      // wyciąganie stringa YYYY-MM-DD w czasie lokalnym
       const rok = aktualna.getFullYear()
       const miesiac = String(aktualna.getMonth() + 1).padStart(2, '0')
       const dzien = String(aktualna.getDate()).padStart(2, '0')
@@ -403,6 +420,16 @@ onMounted(() => {
           <button @click="changeDate(1)" class="btn-nav">Następny dzień →</button>
         </div>
 
+        <div class="filter-bar" v-if="dailySchedule.length > 0">
+          <label class="filter-label">Wybierz lekarza:</label>
+          <select v-model="wybranyLekarzGrafik" class="filter-select">
+            <option value="">Wszyscy lekarze</option>
+            <option v-for="lek in unikalniLekarzeGrafik" :key="lek" :value="lek">
+              {{ lek }}
+            </option>
+          </select>
+        </div>
+
         <div v-if="ladowanie" class="loading-state">Ładowanie grafiku...</div>
         
         <table v-else class="schedule-table">
@@ -416,7 +443,7 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="slot in dailySchedule" :key="slot.id">
+            <tr v-for="slot in przefiltrowanyGrafik" :key="slot.id">
               <td>{{ formatTime(slot.termin_od) }} – {{ formatTime(slot.termin_do) }}</td>
               <td>{{ slot.lekarz }}</td>
               <td>{{ slot.gabinet }}</td>
@@ -437,8 +464,10 @@ onMounted(() => {
                 </div>
               </td>
             </tr>
-            <tr v-if="dailySchedule.length === 0">
-              <td colspan="5" class="empty-state">Brak grafików na ten dzień.</td>
+            <tr v-if="przefiltrowanyGrafik.length === 0">
+              <td colspan="5" class="empty-state">
+                {{ dailySchedule.length === 0 ? 'Brak grafików na ten dzień.' : 'Brak przypisanych slotów dla tego lekarza.' }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -448,6 +477,38 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* dodane pod szukanie grafiku konkretnego lekarza */
+.filter-bar {
+  margin-bottom: 20px;
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.filter-label {
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+}
+
+.filter-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.filter-select:focus {
+  border-color: #3b82f6;
+}
+
 .grafik-view {
   padding: 32px;
   box-sizing: border-box;
@@ -582,7 +643,6 @@ onMounted(() => {
   color: #334155;
 }
 
-/* Nowe style dla listy dat w podglądzie */
 .preview-dates-container {
   margin-bottom: 15px;
   background: white;

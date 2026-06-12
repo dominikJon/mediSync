@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 
 interface Uzytkownik {
@@ -14,6 +14,26 @@ interface Uzytkownik {
 const uzytkownicy = ref<Uzytkownik[]>([])
 const ladowanie = ref(true)
 const blad = ref('')
+
+// zmienne do wyszukiwarki userow - imie, naziwsko, email
+const frazaSzukana = ref('')
+
+const przefiltrowaniUzytkownicy = computed(() => {
+  if (!frazaSzukana.value) {
+    return uzytkownicy.value
+  }
+  
+  const szukane = frazaSzukana.value.toLowerCase()
+  
+  return uzytkownicy.value.filter(u => {
+    const emailMatch = u.email?.toLowerCase().includes(szukane)
+    const imieMatch = u.imie?.toLowerCase().includes(szukane)
+    const nazwiskoMatch = u.nazwisko?.toLowerCase().includes(szukane)
+    
+    return emailMatch || imieMatch || nazwiskoMatch
+  })
+})
+
 
 const pobierzUzytkownikow = async () => {
   try {
@@ -57,6 +77,14 @@ onMounted(pobierzUzytkownikow)
       </div>
     </div>
     
+    <div class="search-bar" v-if="!ladowanie && !blad">
+      <input 
+        type="text" 
+        v-model="frazaSzukana" 
+        placeholder="🔍 Szukaj (e-mail, imię, nazwisko)..." 
+        class="search-input"
+      >
+    </div>
 
     <div v-if="ladowanie" class="loading">Ładowanie...</div>
 
@@ -75,7 +103,7 @@ onMounted(pobierzUzytkownikow)
           </tr>
         </thead>
         <tbody>
-          <tr v-for="u in uzytkownicy" :key="u.id">
+          <tr v-for="u in przefiltrowaniUzytkownicy" :key="u.id">
             <td class="id-cell">{{ u.id }}</td>
             <td>{{ u.email }}</td>
             <td>
@@ -100,6 +128,9 @@ onMounted(pobierzUzytkownikow)
               </button>
             </td>
           </tr>
+          <tr v-if="przefiltrowaniUzytkownicy.length === 0">
+            <td colspan="6" class="empty-state">Brak wyników wyszukiwania.</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -107,6 +138,34 @@ onMounted(pobierzUzytkownikow)
 </template>
 
 <style scoped>
+/* dla search baru */ 
+.search-bar {
+  margin-bottom: 20px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.search-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 30px;
+  color: #64748b;
+  font-style: italic;
+}
+
 .page {
   padding: 32px;
   max-width: 1100px;
