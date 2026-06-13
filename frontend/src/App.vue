@@ -51,7 +51,7 @@ body {
    zwezony widok dla RecordView */
 .main-content:not(.full-width) > .page:not(.narrow-page),
 .main-content:not(.full-width) > .grafik-view:not(.narrow-page) {
-  width: 100% !important;
+  width: 90% !important;
   max-width: 1600px !important;
   margin: 0 auto !important;
 }
